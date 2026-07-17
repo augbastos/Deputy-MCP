@@ -27,6 +27,38 @@ You need two things before connecting: a **Deputy API token** and your **base UR
 
 > **Getting a token — the honest version.** Creating a Deputy API token needs an **admin / System Administrator** access level: Deputy's token-creation page (`/exec/devapp/oauth_clients`, reached via **Business settings → Integrations**) is admin-only, and a regular employee account cannot self-mint one — verified against a live install, where a non-admin sees "you do not have access to this application". If you are not an admin on your workplace's Deputy, either use your own Deputy install or a free trial (where you are the admin) or ask your workplace's Deputy administrator to issue you a token. This is how Deputy works, not a limit of this tool — and once you have a token, every self-service tool below works at a plain employee access level.
 
+### No API token? Use your calendar feed (iCal mode)
+
+Not an admin, so you can't create a token? Deputy still gives **every employee** a personal iCal feed of their own roster — and deputy-mcp can run from just that URL, with no API token and no base URL. This is the way to use the server when you can't mint a token.
+
+**Setup.** In Deputy, open **My Schedule → Subscribe / Export to calendar** and copy the link. Set it as `DEPUTY_CALENDAR_URL`, and leave `DEPUTY_API_TOKEN` and `DEPUTY_BASE_URL` unset. The link carries your personal feed token, so it is a secret — never commit it.
+
+**Claude Code**
+
+```bash
+claude mcp add deputy \
+  -e DEPUTY_CALENDAR_URL=https://your-company.eu.deputy.com/exec/ical/xxxxxxxx/My_Roster.ics \
+  -- uvx deputy-mcp
+```
+
+**Claude Desktop**
+
+```json
+{
+  "mcpServers": {
+    "deputy": {
+      "command": "uvx",
+      "args": ["deputy-mcp"],
+      "env": {
+        "DEPUTY_CALENDAR_URL": "https://your-company.eu.deputy.com/exec/ical/xxxxxxxx/My_Roster.ics"
+      }
+    }
+  }
+}
+```
+
+**What iCal mode gives you.** Roster only, read-only. The registered tools are `deputy_get_my_roster`, `deputy_next_shift`, `deputy_whoami` (a lightweight identity/mode check) and `deputy_get_my_calendar_url`. Timesheets, team roster, who-is-working, employee and area lookup, shift search, and every write tool require an API token (see above) and are simply not present in iCal mode. The feed is durable — it does not expire like a login session — so once it is set the server keeps working as your roster changes.
+
 ### Claude Code
 
 ```bash
@@ -191,13 +223,14 @@ asyncio.run(main())
 
 ## Configuration
 
-All configuration comes from `DEPUTY_*` environment variables. Copy [`.env.example`](.env.example) to `.env` and fill it in (never commit `.env` — it holds the token). Values can also be loaded from a dotenv file: point `DEPUTY_ENV_FILE` at one, or run from a directory containing a `.env`; real environment variables always win over the file.
+All configuration comes from `DEPUTY_*` environment variables. Provide **one** credential set: `DEPUTY_API_TOKEN` + `DEPUTY_BASE_URL` for the full API, or `DEPUTY_CALENDAR_URL` alone for token-free iCal mode. Copy [`.env.example`](.env.example) to `.env` and fill it in (never commit `.env` — it holds a secret). Values can also be loaded from a dotenv file: point `DEPUTY_ENV_FILE` at one, or run from a directory containing a `.env`; real environment variables always win over the file.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DEPUTY_API_TOKEN` | Yes | — | Deputy permanent token or OAuth access token (stored redacted). |
+| `DEPUTY_API_TOKEN` | API mode | — | Deputy permanent token or OAuth access token (stored redacted). |
 | `DEPUTY_ENV_FILE` | No | — | Path to a dotenv file to load `DEPUTY_*` values from (a `./.env` is picked up automatically). |
-| `DEPUTY_BASE_URL` | Yes | — | Your install origin, e.g. `https://your-company.eu.deputy.com`. A trailing slash or `/api/v1` suffix is normalized away. |
+| `DEPUTY_BASE_URL` | API mode | — | Your install origin, e.g. `https://your-company.eu.deputy.com`. A trailing slash or `/api/v1` suffix is normalized away. |
+| `DEPUTY_CALENDAR_URL` | iCal mode | — | Your personal Deputy iCal feed URL — the token-free, roster-only credential (My Schedule → Subscribe/Export to calendar). A secret (holds your feed token), stored redacted. |
 | `DEPUTY_ALLOW_WRITES` | No | `false` | Enable the write tools. Accepts `true`/`1`/`yes` (case-insensitive). |
 | `DEPUTY_ALLOW_CUSTOM_HOST` | No | `false` | Allow a `base_url` host outside `*.deputy.com` (enterprise custom domains only). |
 | `DEPUTY_CACHE_TTL` | No | `30` | In-memory read-cache lifetime in seconds; `0` disables caching. |
@@ -229,7 +262,7 @@ Requires [uv](https://docs.astral.sh/uv/). Clone the repo, then:
 
 ```bash
 uv sync                        # install into a local .venv
-uv run pytest                  # run the test suite (218 tests, all mocked)
+uv run pytest                  # run the test suite (297 tests, all mocked)
 uv run pytest -m live          # optional: read-only smoke tests against a real
                                # Deputy instance (skipped without DEPUTY_* creds)
 uv run ruff check .            # lint

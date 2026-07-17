@@ -18,7 +18,7 @@ tools. Python **3.11+** is required.
 uv sync                     # create the venv and install all deps (incl. dev group)
 
 # The three gates a change must pass — all must be green:
-uv run pytest               # the full suite (212 tests today)
+uv run pytest               # the full suite (297 tests today)
 uv run ruff check .         # lint
 uv run mypy                 # strict type-check (configured over src/)
 ```

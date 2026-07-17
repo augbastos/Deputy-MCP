@@ -10,7 +10,7 @@ Status legend: every item is **Planned** unless it says otherwise. There are no
 
 A note on honesty, because it shapes several items below: the server has **not** been
 smoke-tested against a live Deputy install yet. It is built against Deputy's published
-Resource API docs and exercised by 212 respx-mocked tests, but a handful of API
+Resource API docs and exercised by 297 respx-mocked tests, but a handful of API
 behaviours are documented ambiguously or not at all (see
 [Smoke-test-driven hardening](#smoke-test-driven-hardening)). Where a roadmap item
 depends on pinning down real API behaviour, that dependency is stated.
@@ -167,7 +167,7 @@ the OAuth work (which removes the "type your install URL" step entirely).
 **Status: Planned.**
 
 The single most important item, and the one the honesty note at the top points to. The
-server is validated by 212 respx-mocked tests against the *documented* API — it has
+server is validated by 297 respx-mocked tests against the *documented* API — it has
 never made a real call to a live Deputy install. Several behaviours are documented
 ambiguously or not at all, and only first contact with a real tenant will settle them.
 
