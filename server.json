@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.augbastos/deputy-mcp",
+  "title": "Deputy",
+  "description": "MCP server for Deputy workforce management: rosters, timesheets, and shift tools",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/augbastos/deputy-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "deputy-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DEPUTY_API_TOKEN",
+          "description": "Deputy permanent access token (Business settings -> Integrations -> API access).",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "DEPUTY_BASE_URL",
+          "description": "Your Deputy install URL, e.g. https://your-company.eu.deputy.com",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DEPUTY_ALLOW_WRITES",
+          "description": "Set to true to enable the opt-in write tools. Read-only by default.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
