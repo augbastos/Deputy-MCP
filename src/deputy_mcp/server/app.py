@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastmcp import FastMCP
 
@@ -29,9 +29,22 @@ from deputy_mcp.server import prompts, resources, tools_read
 __all__ = ["create_server"]
 
 
-def _instructions(*, allow_writes: bool) -> str:
-    """Build the server instructions string shown to MCP clients."""
-    mode = "enabled" if allow_writes else "disabled (read-only)"
+def _instructions(*, allow_writes: bool, mode: Literal["api", "ical"]) -> str:
+    """Build the server instructions string shown to MCP clients (mode-aware)."""
+    if mode == "ical":
+        # No API token: only the personal calendar feed is readable, so advertise exactly
+        # that. Writes are impossible here regardless of DEPUTY_ALLOW_WRITES.
+        return (
+            "Query your own Deputy (deputy.com) roster from your personal iCal calendar "
+            "feed (iCal mode — no API token). Available tools: deputy_get_my_roster and "
+            "deputy_next_shift (your own shifts), deputy_get_my_calendar_url and "
+            "deputy_whoami. Team roster, timesheets, who-is-working, employee/area lookup "
+            "and any write action are NOT available; set DEPUTY_API_TOKEN and "
+            "DEPUTY_BASE_URL to unlock the full Deputy API. Every tool accepts "
+            "response_format='markdown' (default) or 'json'. Dates are ISO YYYY-MM-DD; "
+            "times are shown in UTC unless the feed carries a timezone."
+        )
+    writes_state = "enabled" if allow_writes else "disabled (read-only)"
     base = (
         "Query and manage Deputy (deputy.com) workforce data: rosters, shifts, "
         "timesheets, employees and areas. Read tools cover your own and the team's "
@@ -45,7 +58,7 @@ def _instructions(*, allow_writes: bool) -> str:
         if allow_writes
         else " Write actions are disabled; set DEPUTY_ALLOW_WRITES=true to enable them."
     )
-    return f"{base}{writes} Write actions are currently {mode}."
+    return f"{base}{writes} Write actions are currently {writes_state}."
 
 
 def create_server() -> FastMCP[dict[str, Any]]:
@@ -62,16 +75,19 @@ def create_server() -> FastMCP[dict[str, Any]]:
         finally:
             await client.aclose()
 
-    allow_writes = client.config.allow_writes
+    # iCal mode has no API token and is read-only by construction, so writes are always
+    # off there regardless of DEPUTY_ALLOW_WRITES.
+    mode = client.mode
+    allow_writes = client.config.allow_writes and mode == "api"
     mcp: FastMCP[dict[str, Any]] = FastMCP(
         name="deputy_mcp",
         version=__version__,
-        instructions=_instructions(allow_writes=allow_writes),
+        instructions=_instructions(allow_writes=allow_writes, mode=mode),
         lifespan=lifespan,
     )
 
     provider: Callable[[], DeputyClient] = get_client
-    tools_read.register(mcp, provider)
+    tools_read.register(mcp, provider, mode=mode)
     resources.register(mcp, provider)
     prompts.register(mcp)
 

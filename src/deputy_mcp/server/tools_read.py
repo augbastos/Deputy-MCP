@@ -9,14 +9,22 @@ short, actionable message string — tools never leak a raw traceback.
 
 Tools are registered onto a shared FastMCP instance by :func:`register`, which is
 given a ``get_client`` provider so every call reuses the one client built for the
-process lifetime (see :mod:`deputy_mcp.server.app`).
+process lifetime (see :mod:`deputy_mcp.server.app`). The registered set depends on
+the client :attr:`~deputy_mcp.client.DeputyClient.mode`:
+
+* **api** — every read tool below (the full surface).
+* **ical** — only the tools that work from a personal calendar feed:
+  ``deputy_get_my_roster``, ``deputy_next_shift``, ``deputy_get_my_calendar_url`` and a
+  lightweight ``deputy_whoami``. The API-only tools are simply not registered, so the
+  advertised tool list stays honest about what works — the same opt-in-visibility
+  discipline used for write tools.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta, tzinfo
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -41,12 +49,14 @@ from deputy_mcp.server.formatting import (
     render,
     render_areas,
     render_calendar_url,
+    render_calendar_url_ical,
     render_employee_list,
     render_next_shift,
     render_roster_list,
     render_timesheet_list,
     render_who_is_working,
     render_whoami,
+    render_whoami_ical,
     resolve_timezone,
 )
 
@@ -64,8 +74,9 @@ _FORMAT_FIELD = Field(
 async def resolve_client_timezone(client: DeputyClient) -> tuple[tzinfo, str]:
     """Return the install timezone and label, defaulting to UTC on any failure.
 
-    The company/location lookup is best-effort: if it fails (permissions, network)
-    time rendering degrades to UTC rather than failing the whole tool call.
+    The company/location lookup is best-effort: if it fails (permissions, network, or
+    iCal mode where there is no API) time rendering degrades to UTC rather than failing
+    the whole tool call.
     """
     try:
         company = await client.get_company()
@@ -112,8 +123,17 @@ async def _resolve_employee_id(client: DeputyClient, ref: str | None) -> int | N
     return matches[0].Id
 
 
-def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
-    """Register all read tools onto ``mcp`` (uses ``deputy_`` name prefix)."""
+def register(
+    mcp: FastMCP[Any], get_client: ClientProvider, *, mode: Literal["api", "ical"] = "api"
+) -> None:
+    """Register the read tools onto ``mcp`` (uses ``deputy_`` name prefix).
+
+    In ``api`` mode every read tool is registered. In ``ical`` mode only the roster tools
+    that work from a personal calendar feed are registered (``deputy_get_my_roster``,
+    ``deputy_next_shift``, ``deputy_get_my_calendar_url`` and a lightweight
+    ``deputy_whoami``); the API-only tools are left unregistered so the advertised tool
+    list is honest about what actually works.
+    """
     read_only = {"readOnlyHint": True, "openWorldHint": True}
 
     @mcp.tool(name="deputy_whoami", annotations=read_only)
@@ -133,8 +153,21 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         Returns markdown (a connection summary: signed-in name, company, timezone, whether
         clocked in, and the calendar feed) or, with response_format="json", an object
         ``{"whoami", "company", "timezone", "company_name", "clocked_in", "calendar_url"}``
-        where ``clocked_in`` is a bool and ``calendar_url`` is a string or null.
+        where ``clocked_in`` is a bool and ``calendar_url`` is a string or null. In iCal
+        mode there is no API identity, so this reports mode=iCal and that only your roster
+        is available.
         """
+        if mode == "ical":
+            data = {
+                "mode": "ical",
+                "roster_only": True,
+                "available_tools": [
+                    "deputy_get_my_roster",
+                    "deputy_next_shift",
+                    "deputy_get_my_calendar_url",
+                ],
+            }
+            return render(data, render_whoami_ical, response_format)
         client = get_client()
         try:
             who = await client.whoami()
@@ -182,8 +215,13 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
 
         Returns markdown (the subscription link, or a note that this install exposes none)
         or, with response_format="json", an object ``{"calendar_url"}`` whose value is a
-        string or null.
+        string or null. In iCal mode the feed URL is the configured secret and is never
+        printed; the tool confirms it is configured without revealing it.
         """
+        if mode == "ical":
+            # The feed URL is the configured secret (DEPUTY_CALENDAR_URL); never echo it.
+            data = {"mode": "ical", "configured": True, "calendar_url": None}
+            return render(data, render_calendar_url_ical, response_format)
         client = get_client()
         try:
             url = whoami_calendar_url(await client.whoami())
@@ -206,7 +244,8 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         worked time (use deputy_get_my_timesheets) — this returns your scheduled shifts.
 
         Returns markdown (a shift list, times in the install timezone) or, with
-        response_format="json", a list of Roster records.
+        response_format="json", a list of Roster records. The output is identical whether
+        the roster came from the Deputy API or, in iCal mode, from your calendar feed.
         """
         client = get_client()
         try:
@@ -223,6 +262,51 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             )
         except DeputyError as exc:
             return format_error(exc)
+
+    @mcp.tool(name="deputy_next_shift", annotations=read_only)
+    async def deputy_next_shift(
+        employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
+    ) -> str:
+        """Return the single next upcoming shift for an employee (name or id).
+
+        Omit 'employee' to get your own next shift. A name must resolve to exactly one
+        active person; otherwise the matches are listed for you to retry by id.
+
+        When NOT to use: for a full range of upcoming shifts (use deputy_get_my_roster
+        or deputy_search_shifts) — this returns only the earliest one.
+
+        Returns markdown (one shift, or a 'none scheduled' note) or, with
+        response_format="json", a single Roster record or null. In iCal mode only your own
+        next shift is available (naming another employee needs an API token).
+        """
+        client = get_client()
+        try:
+            employee_id = await _resolve_employee_id(client, employee)
+            roster = await client.next_shift(employee_id)
+            tz, label = await resolve_client_timezone(client)
+            areas = await _area_map(client)
+            return render(
+                roster,
+                lambda: render_next_shift(roster, tz, label, areas=areas),
+                response_format,
+            )
+        except DeputyError as exc:
+            return format_error(exc)
+
+    if mode == "api":
+        _register_api_tools(mcp, get_client, read_only)
+
+
+def _register_api_tools(
+    mcp: FastMCP[Any], get_client: ClientProvider, read_only: dict[str, bool]
+) -> None:
+    """Register the read tools that require a Deputy API token (api mode only).
+
+    These reach Deputy's authenticated Resource/self-service API for data beyond the
+    caller's own roster — team roster, live attendance, employee/area lookup, shift search
+    and timesheets. They are not registered in iCal mode, where no API token exists.
+    """
 
     @mcp.tool(name="deputy_get_team_roster", annotations=read_only)
     async def deputy_get_team_roster(
@@ -416,36 +500,6 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         try:
             units = await client.get_operational_units()
             return render(units, lambda: render_areas(units), response_format)
-        except DeputyError as exc:
-            return format_error(exc)
-
-    @mcp.tool(name="deputy_next_shift", annotations=read_only)
-    async def deputy_next_shift(
-        employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
-        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
-    ) -> str:
-        """Return the single next upcoming shift for an employee (name or id).
-
-        Omit 'employee' to get your own next shift. A name must resolve to exactly one
-        active person; otherwise the matches are listed for you to retry by id.
-
-        When NOT to use: for a full range of upcoming shifts (use deputy_get_my_roster
-        or deputy_search_shifts) — this returns only the earliest one.
-
-        Returns markdown (one shift, or a 'none scheduled' note) or, with
-        response_format="json", a single Roster record or null.
-        """
-        client = get_client()
-        try:
-            employee_id = await _resolve_employee_id(client, employee)
-            roster = await client.next_shift(employee_id)
-            tz, label = await resolve_client_timezone(client)
-            areas = await _area_map(client)
-            return render(
-                roster,
-                lambda: render_next_shift(roster, tz, label, areas=areas),
-                response_format,
-            )
         except DeputyError as exc:
             return format_error(exc)
 

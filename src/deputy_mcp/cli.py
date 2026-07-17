@@ -165,6 +165,23 @@ def _employee_name(shift: Roster | Timesheet) -> str:
     return "(unassigned)"
 
 
+def _area_text(shift: Roster | Timesheet) -> str:
+    """Area label for a shift/timesheet, resolving the name when only it is available.
+
+    Uses the ``OperationalUnit`` id when present, else the area name embedded on the
+    record as ``OperationalUnitObject`` — which both ``/api/v1/my/roster`` and the iCal
+    feed carry — so an iCal-mode roster shows its real area/title instead of "no area".
+    """
+    if shift.OperationalUnit is not None:
+        return f"area #{shift.OperationalUnit}"
+    obj = (shift.model_extra or {}).get("OperationalUnitObject")
+    if isinstance(obj, dict):
+        name = obj.get("OperationalUnitName")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return "no area"
+
+
 def _render_rosters(rosters: list[Roster]) -> str:
     """Render a list of rosters as indented bullet lines."""
     if not rosters:
@@ -172,8 +189,7 @@ def _render_rosters(rosters: list[Roster]) -> str:
     lines: list[str] = []
     for shift in rosters:
         who = "OPEN SHIFT" if shift.Open else _employee_name(shift)
-        area = f"area #{shift.OperationalUnit}" if shift.OperationalUnit is not None else "no area"
-        lines.append(f"  - {_fmt_window(shift)}  {who}  ({area})")
+        lines.append(f"  - {_fmt_window(shift)}  {who}  ({_area_text(shift)})")
     return "\n".join(lines)
 
 

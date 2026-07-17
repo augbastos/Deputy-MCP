@@ -39,12 +39,14 @@ __all__ = [
     "render",
     "render_areas",
     "render_calendar_url",
+    "render_calendar_url_ical",
     "render_employee_list",
     "render_next_shift",
     "render_roster_list",
     "render_timesheet_list",
     "render_who_is_working",
     "render_whoami",
+    "render_whoami_ical",
     "resolve_timezone",
     "to_json",
 ]
@@ -154,7 +156,10 @@ def _person(obj: Roster | Timesheet) -> str:
         return employee_display(emp)
     if obj.Employee:
         return f"Employee #{obj.Employee}"
-    return "Open shift"
+    # Reached only when a record has no assigned employee AND was not flagged open
+    # (open shifts are handled by the caller's ``Open`` check). "Unassigned" is honest
+    # here — notably for an iCal-derived shift, which carries no employee field.
+    return "Unassigned"
 
 
 def _area(opunit_id: int | None, areas: Mapping[int, str] | None) -> str:
@@ -164,6 +169,27 @@ def _area(opunit_id: int | None, areas: Mapping[int, str] | None) -> str:
     if areas and opunit_id in areas:
         return areas[opunit_id]
     return f"Area #{opunit_id}"
+
+
+def _area_label(obj: Roster | Timesheet, areas: Mapping[int, str] | None) -> str:
+    """Resolve a shift/timesheet's area name from the best source available.
+
+    Prefers the id -> name map (populated only when the admin ``OperationalUnit`` list is
+    reachable), then the area embedded on the record itself as ``OperationalUnitObject``.
+    Both ``/api/v1/my/roster`` and the iCal feed carry that embedded object, so a plain
+    employee (who cannot list areas) and an iCal-mode caller both see the real area name
+    rather than a bare id — and the output is identical whichever source the roster came
+    from. Falls back to :func:`_area`.
+    """
+    opunit_id = obj.OperationalUnit
+    if opunit_id is not None and areas and opunit_id in areas:
+        return areas[opunit_id]
+    embedded = (obj.model_extra or {}).get("OperationalUnitObject")
+    if isinstance(embedded, dict):
+        name = embedded.get("OperationalUnitName")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return _area(opunit_id, areas)
 
 
 def _hours(value: float | None) -> str:
@@ -178,7 +204,7 @@ def _roster_line(r: Roster, tz: tzinfo, areas: Mapping[int, str] | None) -> str:
     who = "Open shift" if r.Open else _person(r)
     flag = " **[OPEN]**" if r.Open else ""
     times = f"{fmt_ts(r.StartTime, tz)} - {fmt_ts(r.EndTime, tz)}"
-    return f"- {times} | {who} | {_area(r.OperationalUnit, areas)} | {_hours(r.TotalTime)}{flag}"
+    return f"- {times} | {who} | {_area_label(r, areas)} | {_hours(r.TotalTime)}{flag}"
 
 
 def render_roster_list(
@@ -201,7 +227,7 @@ def _timesheet_line(t: Timesheet, tz: tzinfo, areas: Mapping[int, str] | None) -
     end = "in progress" if t.EndTime is None else fmt_ts(t.EndTime, tz)
     live = " **[on the clock]**" if t.IsInProgress else ""
     times = f"{fmt_ts(t.StartTime, tz)} - {end}"
-    area = _area(t.OperationalUnit, areas)
+    area = _area_label(t, areas)
     return f"- {times} | {_person(t)} | {area} | {_hours(t.TotalTime)}{live}"
 
 
@@ -329,4 +355,42 @@ def render_calendar_url(url: str | None) -> str:
         "Add this iCal subscription link to your calendar app (Google Calendar, Apple "
         "Calendar, Outlook) to see your shifts:\n\n"
         f"- {url}"
+    )
+
+
+def render_whoami_ical() -> str:
+    """Render the identity/status summary for iCal mode (no API token).
+
+    iCal mode has no authenticated API identity to report — it reads only the caller's own
+    roster from their personal calendar feed. This states the mode and the honest scope
+    without pretending to know the signed-in name, company or clock state (all API-only).
+    """
+    return "\n".join(
+        [
+            "### Deputy connection OK (iCal mode)",
+            "",
+            "- Mode: **iCal** — reading your personal Deputy calendar feed (no API token).",
+            "- Available: your own roster only — `deputy_get_my_roster`, `deputy_next_shift`.",
+            (
+                "- Not available here: team roster, timesheets, who is working, employee "
+                "lookup and areas. Those need a Deputy API token (set DEPUTY_API_TOKEN and "
+                "DEPUTY_BASE_URL)."
+            ),
+        ]
+    )
+
+
+def render_calendar_url_ical() -> str:
+    """Render the calendar-feed note for iCal mode without revealing the secret URL.
+
+    In iCal mode the feed URL *is* the configured secret (``DEPUTY_CALENDAR_URL``); it
+    carries a private token and is never printed. This confirms it is configured and is
+    the source of the roster here, and points callers at the roster tools for the shifts.
+    """
+    return (
+        "### My calendar feed\n\n"
+        "You are running in iCal mode: your personal Deputy calendar feed is already "
+        "configured (DEPUTY_CALENDAR_URL) and is the source of your roster here. For your "
+        "safety the feed URL carries a private token and is not shown. Use "
+        "`deputy_get_my_roster` or `deputy_next_shift` to see your shifts."
     )
