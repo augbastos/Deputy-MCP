@@ -13,8 +13,10 @@ from __future__ import annotations
 import os
 import warnings
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.parse import urlparse
 
+from dotenv import dotenv_values
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -118,6 +120,10 @@ class DeputyConfig(BaseModel):
     def from_env(cls, environ: Mapping[str, str] | None = None) -> DeputyConfig:
         """Build a config from environment variables, failing closed.
 
+        Values may also come from a dotenv file: ``DEPUTY_ENV_FILE`` names one
+        explicitly, otherwise a ``.env`` in the current directory is used when
+        present. Real environment variables always take precedence over the file.
+
         Args:
             environ: Optional mapping to read instead of ``os.environ`` (tests).
 
@@ -126,6 +132,7 @@ class DeputyConfig(BaseModel):
                 value cannot be parsed.
         """
         env = os.environ if environ is None else environ
+        env = _with_env_file(env, allow_cwd_default=environ is None)
 
         token = (env.get("DEPUTY_API_TOKEN") or "").strip()
         if not token:
@@ -170,6 +177,36 @@ class DeputyConfig(BaseModel):
                 "Invalid Deputy configuration.",
                 hint=_summarize_validation_error(exc),
             ) from exc
+
+
+def _with_env_file(env: Mapping[str, str], *, allow_cwd_default: bool) -> Mapping[str, str]:
+    """Overlay ``DEPUTY_*`` values from an optional dotenv file; real env vars win.
+
+    ``DEPUTY_ENV_FILE`` names the file explicitly (missing file = config error, the
+    user clearly intended it). Without it, a ``.env`` in the current directory is
+    picked up — but only when reading the real process environment
+    (``allow_cwd_default``), so tests passing an explicit mapping stay hermetic and
+    can never silently absorb a developer's local credentials.
+    """
+    explicit = (env.get("DEPUTY_ENV_FILE") or "").strip()
+    candidate = Path(explicit) if explicit else Path(".env")
+    if explicit and not candidate.is_file():
+        raise DeputyConfigError(
+            f"DEPUTY_ENV_FILE points to '{candidate}', which does not exist.",
+            hint="Create the file (see .env.example) or unset DEPUTY_ENV_FILE.",
+        )
+    if not explicit and (not allow_cwd_default or not candidate.is_file()):
+        return env
+    file_values = {
+        key: value
+        for key, value in dotenv_values(candidate).items()
+        if value is not None and key.startswith("DEPUTY_")
+    }
+    if not file_values:
+        return env
+    merged: dict[str, str] = dict(file_values)
+    merged.update({key: value for key, value in env.items() if key.startswith("DEPUTY_")})
+    return merged
 
 
 def _parse_int(env: Mapping[str, str], name: str, default: int) -> int:

@@ -78,28 +78,91 @@ def _build_dataset() -> dict[str, list[dict[str, Any]]]:
     ]
     rosters = [
         # Alex is on now (started an hour ago, ends in three) -> rostered + my roster.
-        _roster(9001, u(now - timedelta(hours=1)), u(now + timedelta(hours=3)),
-                today, 101, 11, published=True, open_=False, comment="Morning shift"),
+        _roster(
+            9001,
+            u(now - timedelta(hours=1)),
+            u(now + timedelta(hours=3)),
+            today,
+            101,
+            11,
+            published=True,
+            open_=False,
+            comment="Morning shift",
+        ),
         # Sam is also on now.
-        _roster(9002, u(now - timedelta(hours=2)), u(now + timedelta(hours=2)),
-                today, 102, 12, published=True, open_=False, comment="Kitchen prep"),
+        _roster(
+            9002,
+            u(now - timedelta(hours=2)),
+            u(now + timedelta(hours=2)),
+            today,
+            102,
+            12,
+            published=True,
+            open_=False,
+            comment="Kitchen prep",
+        ),
         # An unassigned open cover shift later today.
-        _roster(9003, u(now + timedelta(hours=4)), u(now + timedelta(hours=8)),
-                today, 0, 12, published=True, open_=True, comment="Open cover shift"),
+        _roster(
+            9003,
+            u(now + timedelta(hours=4)),
+            u(now + timedelta(hours=8)),
+            today,
+            0,
+            12,
+            published=True,
+            open_=True,
+            comment="Open cover shift",
+        ),
         # Alex's next shift is tomorrow 09:00-17:00.
-        _roster(9004, u(at(tomorrow, 9)), u(at(tomorrow, 17)),
-                tomorrow, 101, 11, published=True, open_=False, comment="Morning shift"),
+        _roster(
+            9004,
+            u(at(tomorrow, 9)),
+            u(at(tomorrow, 17)),
+            tomorrow,
+            101,
+            11,
+            published=True,
+            open_=False,
+            comment="Morning shift",
+        ),
         # Sam works the day after tomorrow.
-        _roster(9005, u(at(day_after, 12)), u(at(day_after, 20)),
-                day_after, 102, 12, published=True, open_=False, comment="Evening shift"),
+        _roster(
+            9005,
+            u(at(day_after, 12)),
+            u(at(day_after, 20)),
+            day_after,
+            102,
+            12,
+            published=True,
+            open_=False,
+            comment="Evening shift",
+        ),
     ]
     timesheets = [
         # Alex is clocked in right now (no EndTime yet).
-        _timesheet(7001, 101, 9001, 11, today, u(now - timedelta(hours=1)), None,
-                   total=0.0, in_progress=True),
+        _timesheet(
+            7001,
+            101,
+            9001,
+            11,
+            today,
+            u(now - timedelta(hours=1)),
+            None,
+            total=0.0,
+            in_progress=True,
+        ),
         # Sam clocked a completed earlier block today.
-        _timesheet(7002, 102, 9002, 12, today, u(now - timedelta(hours=4)),
-                   u(now - timedelta(hours=2)), total=2.0, in_progress=False),
+        _timesheet(
+            7002,
+            102,
+            9002,
+            12,
+            today,
+            u(now - timedelta(hours=4)),
+            u(now - timedelta(hours=2)),
+            total=2.0,
+            in_progress=False,
+        ),
     ]
     return {
         "Employee": employees,
@@ -114,48 +177,109 @@ def _employee(
     eid: int, first: str, last: str, *, active: bool, start: str, role: int
 ) -> dict[str, Any]:
     return {
-        "Id": eid, "Company": 1, "FirstName": first, "LastName": last,
-        "DisplayName": f"{first} {last}", "OtherName": None, "Contact": 400 + eid,
-        "User": 100 + eid, "Active": active, "StartDate": start,
-        "TerminationDate": None, "Role": role,
-        "Created": f"{start}T09:00:00", "Modified": "2024-01-15T12:00:00",
+        "Id": eid,
+        "Company": 1,
+        "FirstName": first,
+        "LastName": last,
+        "DisplayName": f"{first} {last}",
+        "OtherName": None,
+        "Contact": 400 + eid,
+        "User": 100 + eid,
+        "Active": active,
+        "StartDate": start,
+        "TerminationDate": None,
+        "Role": role,
+        "Created": f"{start}T09:00:00",
+        "Modified": "2024-01-15T12:00:00",
     }
 
 
 def _opunit(uid: int, name: str) -> dict[str, Any]:
     return {
-        "Id": uid, "Company": 1, "ParentOperationalUnit": None,
-        "OperationalUnitName": name, "Active": True, "RosterActive": True,
-        "ShowOnRoster": True, "Address": 301, "Contact": 400 + uid,
+        "Id": uid,
+        "Company": 1,
+        "ParentOperationalUnit": None,
+        "OperationalUnitName": name,
+        "Active": True,
+        "RosterActive": True,
+        "ShowOnRoster": True,
+        "Address": 301,
+        "Contact": 400 + uid,
     }
 
 
-def _roster(rid: int, start: int, end: int, day: Any, employee: int, unit: int,
-            *, published: bool, open_: bool, comment: str) -> dict[str, Any]:
+def _roster(
+    rid: int,
+    start: int,
+    end: int,
+    day: Any,
+    employee: int,
+    unit: int,
+    *,
+    published: bool,
+    open_: bool,
+    comment: str,
+) -> dict[str, Any]:
     return {
-        "Id": rid, "StartTime": start, "EndTime": end, "Date": day.isoformat(),
-        "Employee": employee, "OperationalUnit": unit, "MatchedByTimesheet": None,
-        "Comment": comment, "Warning": None, "TotalTime": round((end - start) / 3600, 2),
-        "Cost": 0.0, "Published": published, "Open": open_, "ApprovalRequired": False,
-        "ConfirmStatus": 0, "SwapStatus": 0, "Creator": 1,
-        "Created": "2024-01-01T10:00:00", "Modified": "2024-01-01T10:00:00",
+        "Id": rid,
+        "StartTime": start,
+        "EndTime": end,
+        "Date": day.isoformat(),
+        "Employee": employee,
+        "OperationalUnit": unit,
+        "MatchedByTimesheet": None,
+        "Comment": comment,
+        "Warning": None,
+        "TotalTime": round((end - start) / 3600, 2),
+        "Cost": 0.0,
+        "Published": published,
+        "Open": open_,
+        "ApprovalRequired": False,
+        "ConfirmStatus": 0,
+        "SwapStatus": 0,
+        "Creator": 1,
+        "Created": "2024-01-01T10:00:00",
+        "Modified": "2024-01-01T10:00:00",
     }
 
 
-def _timesheet(tid: int, employee: int, roster: int, unit: int, day: Any,
-               start: int, end: int | None, *, total: float, in_progress: bool) -> dict[str, Any]:
+def _timesheet(
+    tid: int,
+    employee: int,
+    roster: int,
+    unit: int,
+    day: Any,
+    start: int,
+    end: int | None,
+    *,
+    total: float,
+    in_progress: bool,
+) -> dict[str, Any]:
     return {
-        "Id": tid, "Employee": employee, "Roster": roster, "OperationalUnit": unit,
-        "Date": day.isoformat(), "StartTime": start, "EndTime": end,
-        "TotalTime": total, "Cost": round(total * 15, 2), "IsInProgress": in_progress,
-        "RealTime": True, "TimeApproved": not in_progress,
-        "PayRuleApproved": not in_progress, "Discarded": False,
+        "Id": tid,
+        "Employee": employee,
+        "Roster": roster,
+        "OperationalUnit": unit,
+        "Date": day.isoformat(),
+        "StartTime": start,
+        "EndTime": end,
+        "TotalTime": total,
+        "Cost": round(total * 15, 2),
+        "IsInProgress": in_progress,
+        "RealTime": True,
+        "TimeApproved": not in_progress,
+        "PayRuleApproved": not in_progress,
+        "Discarded": False,
     }
 
 
 WHOAMI = {
-    "UserId": 201, "EmployeeId": 101, "Name": "Alex Rivera",
-    "Company": 1, "CompanyName": "Cloud Nine Cafe", "Permissions": {},
+    "UserId": 201,
+    "EmployeeId": 101,
+    "Name": "Alex Rivera",
+    "Company": 1,
+    "CompanyName": "Cloud Nine Cafe",
+    "Permissions": {},
 }
 
 
@@ -193,8 +317,12 @@ def _match(record: dict[str, Any], slot: dict[str, Any]) -> bool:
     if result is None:
         return op == "ne"
     return {
-        "eq": result == 0, "ne": result != 0, "gt": result > 0,
-        "ge": result >= 0, "lt": result < 0, "le": result <= 0,
+        "eq": result == 0,
+        "ne": result != 0,
+        "gt": result > 0,
+        "ge": result >= 0,
+        "lt": result < 0,
+        "le": result <= 0,
     }[op]
 
 
@@ -208,8 +336,12 @@ def _sort_key(value: Any) -> tuple[int, float, str]:
         return (2, 0.0, str(value))
 
 
-def run_query(obj: str, body: dict[str, Any], data: dict[str, list[dict[str, Any]]],
-              employees_by_id: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+def run_query(
+    obj: str,
+    body: dict[str, Any],
+    data: dict[str, list[dict[str, Any]]],
+    employees_by_id: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Apply a QUERY body (search/sort/join/max/start) to the object's records."""
     records = list(data.get(obj, []))
     for slot in (body.get("search") or {}).values():
@@ -255,8 +387,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(WHOAMI)
             return
         prefix = "/api/v1/resource/Employee/"
-        if path.startswith(prefix) and path[len(prefix):].isdigit():
-            emp = self.employees_by_id.get(int(path[len(prefix):]))
+        if path.startswith(prefix) and path[len(prefix) :].isdigit():
+            emp = self.employees_by_id.get(int(path[len(prefix) :]))
             self._send(emp if emp else {"error": "not found"}, 200 if emp else 404)
             return
         self._send({"error": f"no route for GET {path}"}, 404)
@@ -278,8 +410,10 @@ def main() -> None:
     _Handler.dataset = dataset
     _Handler.employees_by_id = {e["Id"]: e for e in dataset["Employee"]}
     server = ThreadingHTTPServer((HOST, PORT), _Handler)
-    print(f"mock_deputy: DEMO/TESTING ONLY -- serving fictional Deputy data on "
-          f"http://{HOST}:{PORT} (Ctrl+C to stop)")
+    print(
+        f"mock_deputy: DEMO/TESTING ONLY -- serving fictional Deputy data on "
+        f"http://{HOST}:{PORT} (Ctrl+C to stop)"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

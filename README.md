@@ -181,11 +181,12 @@ asyncio.run(main())
 
 ## Configuration
 
-All configuration comes from `DEPUTY_*` environment variables. Copy [`.env.example`](.env.example) to `.env` and fill it in (never commit `.env` — it holds the token).
+All configuration comes from `DEPUTY_*` environment variables. Copy [`.env.example`](.env.example) to `.env` and fill it in (never commit `.env` — it holds the token). Values can also be loaded from a dotenv file: point `DEPUTY_ENV_FILE` at one, or run from a directory containing a `.env`; real environment variables always win over the file.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DEPUTY_API_TOKEN` | Yes | — | Deputy permanent token or OAuth access token (stored redacted). |
+| `DEPUTY_ENV_FILE` | No | — | Path to a dotenv file to load `DEPUTY_*` values from (a `./.env` is picked up automatically). |
 | `DEPUTY_BASE_URL` | Yes | — | Your install origin, e.g. `https://your-company.eu.deputy.com`. A trailing slash or `/api/v1` suffix is normalized away. |
 | `DEPUTY_ALLOW_WRITES` | No | `false` | Enable the write tools. Accepts `true`/`1`/`yes` (case-insensitive). |
 | `DEPUTY_ALLOW_CUSTOM_HOST` | No | `false` | Allow a `base_url` host outside `*.deputy.com` (enterprise custom domains only). |
@@ -218,7 +219,9 @@ Requires [uv](https://docs.astral.sh/uv/). Clone the repo, then:
 
 ```bash
 uv sync                        # install into a local .venv
-uv run pytest                  # run the test suite (212 tests)
+uv run pytest                  # run the test suite (218 tests, all mocked)
+uv run pytest -m live          # optional: read-only smoke tests against a real
+                               # Deputy instance (skipped without DEPUTY_* creds)
 uv run ruff check .            # lint
 uv run ruff format --check .   # formatting
 uv run mypy                    # type-check (strict)
