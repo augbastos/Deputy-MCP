@@ -116,12 +116,28 @@ def wire_write_api(
     timesheet_ended: dict[str, Any],
     in_progress_timesheet: dict[str, Any],
     operational_units: list[dict[str, Any]] | None = None,
+    open_roster: dict[str, Any] | None = None,
 ) -> None:
     """Register every write endpoint (plus the reads a write path needs)."""
     router.get("/resource/Account/WhoAmI").mock(return_value=_ok(whoami))
     router.post("/resource/Company/QUERY").mock(return_value=_ok([company]))
     router.post("/resource/OperationalUnit/QUERY").mock(return_value=_ok(operational_units or []))
-    # claim_open_shift: Deputy answers a roster update with 200 + empty body.
+    # claim_open_shift reads the target roster first (to confirm it is open and to
+    # preserve its time/area), then updates it. Deputy answers the update with 200 +
+    # empty body.
+    router.get(path__regex=r"/resource/Roster/\d+$").mock(
+        return_value=_ok(
+            open_roster
+            or {
+                "Id": 9001,
+                "StartTime": 1609459200,
+                "EndTime": 1609488000,
+                "OperationalUnit": 11,
+                "Open": True,
+                "Employee": 0,
+            }
+        )
+    )
     router.post("/supervise/roster").mock(return_value=httpx.Response(200, text=""))
     router.post("/resource/RosterSwap").mock(return_value=_ok(swap))
     router.post("/supervise/unavail").mock(return_value=_ok(unavailability))

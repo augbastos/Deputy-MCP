@@ -229,6 +229,62 @@ async def test_transport_error_exhausted_maps_to_api_error(
         await http.aclose()
 
 
+# -- idempotency guard: writes (bare POST) must never be replayed ------------
+
+
+async def test_write_post_not_retried_on_retryable_status(
+    deputy_api: respx.MockRouter,
+    make_config: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A 503 on a write POST must NOT be retried: Deputy may already have applied it,
+    # so a blind replay could double-apply the mutation.
+    route = deputy_api.post("/supervise/timesheet/start").mock(return_value=httpx.Response(503))
+    http = DeputyHTTP(make_config(max_retries=3))
+    monkeypatch.setattr(http, "_sleep", AsyncMock())
+    try:
+        with pytest.raises(DeputyAPIError):
+            await http.request("POST", "/supervise/timesheet/start", json_body={"x": 1})
+        assert route.call_count == 1  # no retries for a non-idempotent write
+    finally:
+        await http.aclose()
+
+
+async def test_write_post_not_retried_on_timeout(
+    deputy_api: respx.MockRouter,
+    make_config: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    route = deputy_api.post("/supervise/roster").mock(side_effect=httpx.ReadTimeout("slow"))
+    http = DeputyHTTP(make_config(max_retries=3))
+    monkeypatch.setattr(http, "_sleep", AsyncMock())
+    try:
+        with pytest.raises(DeputyAPIError):
+            await http.request("POST", "/supervise/roster", json_body={"x": 1})
+        assert route.call_count == 1  # timeout on a write is surfaced, not replayed
+    finally:
+        await http.aclose()
+
+
+async def test_idempotent_post_is_retried(
+    deputy_api: respx.MockRouter,
+    make_config: ConfigFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A read QUERY POST opts back in via idempotent=True, so it retries like a read.
+    route = deputy_api.post("/resource/Roster/QUERY").mock(
+        side_effect=[httpx.Response(503), httpx.Response(200, json=[{"Id": 1}])]
+    )
+    http = DeputyHTTP(make_config(max_retries=3))
+    monkeypatch.setattr(http, "_sleep", AsyncMock())
+    try:
+        result = await http.request("POST", "/resource/Roster/QUERY", json_body={}, idempotent=True)
+        assert result == [{"Id": 1}]
+        assert route.call_count == 2
+    finally:
+        await http.aclose()
+
+
 # -- TTL cache ---------------------------------------------------------------
 
 

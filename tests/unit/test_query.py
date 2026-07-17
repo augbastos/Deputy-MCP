@@ -164,9 +164,16 @@ class _FakeRequester:
         json_body: Any | None = None,
         params: dict[str, Any] | None = None,
         cacheable: bool = False,
+        idempotent: bool = False,
     ) -> Any:
         self.calls.append(
-            {"method": method, "path": path, "body": json_body, "cacheable": cacheable}
+            {
+                "method": method,
+                "path": path,
+                "body": json_body,
+                "cacheable": cacheable,
+                "idempotent": idempotent,
+            }
         )
         offset = int(json_body["start"]) if json_body else 0
         return self._pages.get(offset, [])
@@ -207,6 +214,36 @@ async def test_query_all_respects_hard_limit() -> None:
     assert len(result) == 700
     # Second full page is fetched, then the hard limit stops the loop.
     assert len(fake.calls) == 2
+
+
+async def test_query_all_marks_query_idempotent() -> None:
+    # QUERY is a POST but reads nothing, so it must be replay-safe (retryable).
+    fake = _FakeRequester({0: _records(3)})
+    await query_all(fake, "Roster", QueryBuilder())
+    assert fake.calls[0]["method"] == "POST"
+    assert fake.calls[0]["idempotent"] is True
+
+
+async def test_query_all_warns_when_truncated(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Deputy keeps returning full pages while we hit the hard limit -> truncation.
+    pages = {0: _records(MAX_PAGE, 0), 500: _records(MAX_PAGE, 500)}
+    fake = _FakeRequester(pages)
+    with caplog.at_level("WARNING", logger="deputy_mcp.client.query"):
+        result = await query_all(fake, "Roster", QueryBuilder(), hard_limit=700)
+    assert len(result) == 700
+    assert any("truncated" in rec.message.lower() for rec in caplog.records)
+
+
+async def test_query_all_no_warning_when_complete(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A short final page means the set is complete -> no truncation warning.
+    fake = _FakeRequester({0: _records(3)})
+    with caplog.at_level("WARNING", logger="deputy_mcp.client.query"):
+        await query_all(fake, "Employee", QueryBuilder())
+    assert not caplog.records
 
 
 async def test_query_all_honors_builder_page_size() -> None:

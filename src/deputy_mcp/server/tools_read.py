@@ -321,11 +321,31 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             tz, label = await resolve_client_timezone(client)
             areas = await _area_map(client)
             title = "Open shifts" if open_only else "Matching shifts"
-            return render(
-                rosters,
-                lambda: render_roster_list(rosters, tz, label, title=title, areas=areas),
-                response_format,
-            )
+            # A full page (returned == limit) means more shifts may exist. Surface a
+            # pagination cursor so the caller does not treat one page as the total.
+            has_more = len(rosters) >= limit
+            next_offset = offset + limit if has_more else None
+            data = {
+                "shifts": rosters,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "returned": len(rosters),
+                    "has_more": has_more,
+                    "next_offset": next_offset,
+                },
+            }
+
+            def _markdown() -> str:
+                body = render_roster_list(rosters, tz, label, title=title, areas=areas)
+                if has_more:
+                    body += (
+                        f"\n\n_More shifts may exist. Call again with offset="
+                        f"{next_offset} to see the next page._"
+                    )
+                return body
+
+            return render(data, _markdown, response_format)
         except DeputyError as exc:
             return _error(exc)
 

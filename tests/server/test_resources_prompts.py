@@ -26,12 +26,18 @@ def _wire_roster(
     router: respx.MockRouter,
     make_roster: Any,
     make_company: Any,
+    make_whoami: Any,
 ) -> None:
     """Mock the endpoints a weekly-roster resource reads."""
-    # The resource has no date filter on /my/roster, so make the shift land in any
-    # requested week by giving it no Date (kept by the range filter) — a real shift
-    # with a fixed 2021 Date would be filtered out of the current calendar week.
-    router.get("/my/roster").mock(return_value=httpx.Response(200, json=[make_roster(Date=None)]))
+    # get_my_roster resolves the caller's own id (WhoAmI) then queries the Roster
+    # resource by employee id + Date range. respx returns the same payload regardless
+    # of the range in the body, so a single shift stands in for the week.
+    router.get("/resource/Account/WhoAmI").mock(
+        return_value=httpx.Response(200, json=make_whoami())
+    )
+    router.post("/resource/Roster/QUERY").mock(
+        return_value=httpx.Response(200, json=[make_roster()])
+    )
     router.post("/resource/Company/QUERY").mock(
         return_value=httpx.Response(200, json=[make_company()])
     )
@@ -54,8 +60,9 @@ async def test_weekly_roster_resource_renders(
     deputy_api: respx.MockRouter,
     make_roster: Any,
     make_company: Any,
+    make_whoami: Any,
 ) -> None:
-    _wire_roster(deputy_api, make_roster, make_company)
+    _wire_roster(deputy_api, make_roster, make_company, make_whoami)
     server = create_server()
     async with Client(server) as client:
         contents = await client.read_resource(uri)
@@ -66,7 +73,8 @@ async def test_weekly_roster_resource_renders(
 
 async def test_resource_error_is_graceful(deputy_api: respx.MockRouter) -> None:
     """A failing read degrades to an explanatory document, not an exception."""
-    deputy_api.get("/my/roster").mock(return_value=httpx.Response(401))
+    # get_my_roster resolves own id via WhoAmI first; a 401 there fails the whole read.
+    deputy_api.get("/resource/Account/WhoAmI").mock(return_value=httpx.Response(401))
     server = create_server()
     async with Client(server) as client:
         contents = await client.read_resource(_THIS_WEEK)

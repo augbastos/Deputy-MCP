@@ -215,6 +215,40 @@ async def test_response_format_json_is_valid_json(
     assert parsed[0]["OperationalUnitName"] == "Front of House"
 
 
+async def test_search_shifts_json_has_pagination_cursor(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_employee: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """A full page must report has_more + next_offset so a caller can page on."""
+    _wire(
+        deputy_api,
+        make_whoami,
+        make_company,
+        make_employee,
+        make_operational_unit,
+        make_roster,
+        make_timesheet,
+        sample_employees,
+    )
+    server = create_server()
+    async with Client(server) as client:
+        # Mock returns one shift; limit=1 -> a full page -> more may exist.
+        js = tool_text(
+            await client.call_tool("deputy_search_shifts", {"limit": 1, "response_format": "json"})
+        )
+    parsed = json.loads(js)
+    assert "shifts" in parsed
+    assert parsed["pagination"]["has_more"] is True
+    assert parsed["pagination"]["next_offset"] == 1
+    assert parsed["pagination"]["returned"] == 1
+
+
 async def test_who_is_working_json_has_both_lists(
     deputy_api: respx.MockRouter,
     make_whoami: PayloadFactory,

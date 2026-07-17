@@ -81,39 +81,84 @@ async def test_whoami_unwraps_single_element_list(
     assert (who.model_extra or {})["EmployeeId"] == 101
 
 
-# -- /my/* range-filtered reads ----------------------------------------------
+# -- /my/* range reads (Roster/Timesheet QUERY by own employee id) -----------
+# The future-only GET /my/roster cannot serve an arbitrary range and its 200 shape is
+# unverified (a wrapped array would silently become "no shifts"), so the client queries
+# the Roster/Timesheet resource by the caller's own employee id + Date range instead.
 
 
-async def test_get_my_roster_filters_by_date_range(
+async def test_get_my_roster_queries_roster_by_own_id_and_range(
     client: DeputyClient,
     deputy_api: respx.MockRouter,
     make_roster: PayloadFactory,
+    make_whoami: PayloadFactory,
 ) -> None:
-    payload = [
-        make_roster(Id=1, Date="2020-12-31"),  # before window
-        make_roster(Id=2, Date="2021-01-03"),  # inside window
-        make_roster(Id=3, Date="2021-01-10"),  # after window
-    ]
-    route = deputy_api.get("/my/roster").mock(return_value=httpx.Response(200, json=payload))
+    deputy_api.get("/resource/Account/WhoAmI").mock(
+        return_value=httpx.Response(200, json=make_whoami())
+    )
+    route = deputy_api.post("/resource/Roster/QUERY").mock(
+        return_value=httpx.Response(200, json=[make_roster(Id=2, Date="2021-01-03")])
+    )
     result = await client.get_my_roster(date(2021, 1, 1), date(2021, 1, 7))
-    assert route.called
     assert [r.Id for r in result] == [2]
+    # Uses the QUERY resource (not the future-only /my/roster), scoped to own id 101.
+    assert _posted_body(route) == {
+        "search": {
+            "s1": {"field": "Employee", "type": "eq", "data": 101},
+            "s2": {"field": "Date", "type": "ge", "data": "2021-01-01"},
+            "s3": {"field": "Date", "type": "le", "data": "2021-01-07"},
+        },
+        "sort": {"StartTime": "asc"},
+        "join": ["EmployeeObject"],
+        "max": 500,
+        "start": 0,
+    }
 
 
-async def test_get_my_timesheets_filters_by_date_range(
+async def test_get_my_roster_keeps_wrapped_envelope_shapes_out_of_scope(
+    client: DeputyClient,
+    deputy_api: respx.MockRouter,
+    make_roster: PayloadFactory,
+    make_whoami: PayloadFactory,
+) -> None:
+    # Regression for the silent-empty bug: the old GET /my/roster path coerced a
+    # non-list response to []. The QUERY path returns a normal JSON array, so a real
+    # shift is never dropped.
+    deputy_api.get("/resource/Account/WhoAmI").mock(
+        return_value=httpx.Response(200, json=make_whoami())
+    )
+    deputy_api.post("/resource/Roster/QUERY").mock(
+        return_value=httpx.Response(200, json=[make_roster(Id=7)])
+    )
+    result = await client.get_my_roster(date(2021, 1, 1), date(2021, 1, 31))
+    assert [r.Id for r in result] == [7]
+
+
+async def test_get_my_timesheets_queries_timesheet_by_own_id_and_range(
     client: DeputyClient,
     deputy_api: respx.MockRouter,
     make_timesheet: PayloadFactory,
+    make_whoami: PayloadFactory,
 ) -> None:
-    payload = [
-        make_timesheet(Id=1, Date="2020-12-31"),
-        make_timesheet(Id=2, Date="2021-01-04"),
-        make_timesheet(Id=3, Date="2021-02-01"),
-    ]
-    route = deputy_api.get("/my/timesheets").mock(return_value=httpx.Response(200, json=payload))
+    deputy_api.get("/resource/Account/WhoAmI").mock(
+        return_value=httpx.Response(200, json=make_whoami())
+    )
+    route = deputy_api.post("/resource/Timesheet/QUERY").mock(
+        return_value=httpx.Response(200, json=[make_timesheet(Id=2, Date="2021-01-04")])
+    )
     result = await client.get_my_timesheets(date(2021, 1, 1), date(2021, 1, 31))
-    assert route.called
     assert [t.Id for t in result] == [2]
+    assert _posted_body(route) == {
+        "search": {
+            "s1": {"field": "Employee", "type": "eq", "data": 101},
+            "s2": {"field": "Date", "type": "ge", "data": "2021-01-01"},
+            "s3": {"field": "Date", "type": "le", "data": "2021-01-31"},
+        },
+        "sort": {"StartTime": "asc"},
+        "join": ["EmployeeObject"],
+        "max": 500,
+        "start": 0,
+    }
 
 
 # -- Roster/QUERY reads ------------------------------------------------------
@@ -226,17 +271,23 @@ async def test_who_is_working_queries_both_signals(
     assert [t.Id for t in result["clocked_in"]] == [7001]
     assert [r.Id for r in result["rostered_now"]] == [9001]
 
+    # clocked_in honors the instant too (StartTime le now), not just IsInProgress.
     assert _posted_body(ts_route) == {
-        "search": {"s1": {"field": "IsInProgress", "type": "eq", "data": True}},
+        "search": {
+            "s1": {"field": "IsInProgress", "type": "eq", "data": True},
+            "s2": {"field": "StartTime", "type": "le", "data": now},
+        },
         "join": ["EmployeeObject"],
         "max": 500,
         "start": 0,
     }
+    # rostered_now excludes drafts via Published eq true (Strategy B) and open shifts.
     assert _posted_body(roster_route) == {
         "search": {
             "s1": {"field": "StartTime", "type": "le", "data": now},
             "s2": {"field": "EndTime", "type": "gt", "data": now},
-            "s3": {"field": "Open", "type": "ne", "data": True},
+            "s3": {"field": "Published", "type": "eq", "data": True},
+            "s4": {"field": "Open", "type": "ne", "data": True},
         },
         "join": ["EmployeeObject"],
         "max": 500,

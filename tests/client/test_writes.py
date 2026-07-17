@@ -230,27 +230,69 @@ def test_parse_recurrence_malformed_rejected(repeat: str) -> None:
 # Each mocks WhoAmI (own_employee_id -> 101) and asserts the documented body.
 
 
-async def test_claim_open_shift_payload(
+async def test_claim_open_shift_payload_preserves_time_and_area(
     write_client: DeputyClient,
     deputy_api: respx.MockRouter,
     make_whoami: PayloadFactory,
+    make_roster: PayloadFactory,
 ) -> None:
     _mock_whoami(deputy_api, make_whoami)
+    # The shift is read first; its StartTime/EndTime/OperationalUnit must be echoed
+    # back on the update so a full upsert cannot blank them.
+    deputy_api.get("/resource/Roster/9001").mock(
+        return_value=httpx.Response(
+            200,
+            json=make_roster(
+                Id=9001,
+                Open=True,
+                Employee=0,
+                StartTime=1609459200,
+                EndTime=1609488000,
+                OperationalUnit=11,
+            ),
+        )
+    )
     route = deputy_api.post("/supervise/roster").mock(return_value=httpx.Response(200))
     await write_client.claim_open_shift(9001)
     assert _posted_body(route) == {
         "intRosterId": 9001,
         "intRosterEmployee": 101,
         "blnOpen": 0,
+        "intStartTimestamp": 1609459200,
+        "intEndTimestamp": 1609488000,
+        "intOpunitId": 11,
     }
+
+
+async def test_claim_open_shift_refuses_non_open_shift(
+    write_client: DeputyClient,
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_roster: PayloadFactory,
+) -> None:
+    # An already-assigned (not open) shift must not be silently overwritten -- that
+    # would clobber a colleague, contradicting destructiveHint=false.
+    _mock_whoami(deputy_api, make_whoami)
+    deputy_api.get("/resource/Roster/9001").mock(
+        return_value=httpx.Response(200, json=make_roster(Id=9001, Open=False, Employee=102))
+    )
+    update_route = deputy_api.post("/supervise/roster").mock(return_value=httpx.Response(200))
+    with pytest.raises(DeputyError) as exc:
+        await write_client.claim_open_shift(9001)
+    assert "not an open shift" in str(exc.value).lower()
+    assert not update_route.called  # never touched the roster
 
 
 async def test_claim_open_shift_403_maps_to_permission_error(
     write_client: DeputyClient,
     deputy_api: respx.MockRouter,
     make_whoami: PayloadFactory,
+    make_roster: PayloadFactory,
 ) -> None:
     _mock_whoami(deputy_api, make_whoami)
+    deputy_api.get("/resource/Roster/9001").mock(
+        return_value=httpx.Response(200, json=make_roster(Id=9001, Open=True, Employee=0))
+    )
     deputy_api.post("/supervise/roster").mock(return_value=httpx.Response(403))
     with pytest.raises(DeputyPermissionError):
         await write_client.claim_open_shift(9001)
@@ -423,3 +465,30 @@ async def test_clock_out_no_in_progress_timesheet_errors(
     with pytest.raises(DeputyError) as exc:
         await write_client.clock_out()
     assert "in-progress" in str(exc.value).lower()
+
+
+async def test_clock_out_multiple_in_progress_is_ambiguous(
+    write_client: DeputyClient,
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_timesheet: PayloadFactory,
+) -> None:
+    # Two open timesheets: clocking out only the newest and leaving the older running
+    # is a payroll hazard, so the auto-resolve path must error (the tool promises to).
+    _mock_whoami(deputy_api, make_whoami)
+    deputy_api.post("/resource/Timesheet/QUERY").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                make_timesheet(Id=7300, EndTime=None, IsInProgress=True),
+                make_timesheet(Id=7299, EndTime=None, IsInProgress=True),
+            ],
+        )
+    )
+    end_route = deputy_api.post("/supervise/timesheet/end").mock(
+        return_value=httpx.Response(200, json=make_timesheet(Id=7300))
+    )
+    with pytest.raises(DeputyError) as exc:
+        await write_client.clock_out()
+    assert "unambiguously" in str(exc.value).lower()
+    assert not end_route.called  # nothing was clocked out
