@@ -1,0 +1,50 @@
+[
+  {
+    "Id": 101,
+    "Company": 1,
+    "FirstName": "Alex",
+    "LastName": "Rivera",
+    "DisplayName": "Alex Rivera",
+    "OtherName": null,
+    "Contact": 501,
+    "User": 201,
+    "Active": true,
+    "StartDate": "2023-04-01",
+    "TerminationDate": null,
+    "Role": 45,
+    "Created": "2023-04-01T09:00:00",
+    "Modified": "2024-01-15T12:00:00"
+  },
+  {
+    "Id": 102,
+    "Company": 1,
+    "FirstName": "Sam",
+    "LastName": "O'Brien",
+    "DisplayName": "Sam O'Brien",
+    "OtherName": null,
+    "Contact": 502,
+    "User": 202,
+    "Active": true,
+    "StartDate": "2022-11-14",
+    "TerminationDate": null,
+    "Role": 45,
+    "Created": "2022-11-14T09:00:00",
+    "Modified": "2024-02-01T08:30:00"
+  },
+  {
+    "Id": 103,
+    "Company": 1,
+    "FirstName": "Jo",
+    "LastName": "Murphy",
+    "DisplayName": "Jo Murphy",
+    "OtherName": null,
+    "Contact": 503,
+    "User": 203,
+    "Active": false,
+    "StartDate": "2021-06-01",
+    "TerminationDate": "2024-06-30",
+    "Role": 44,
+    "Created": "2021-06-01T09:00:00",
+    "Modified": "2024-06-30T17:00:00"
+  }
+]

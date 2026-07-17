@@ -1,0 +1,24 @@
+[
+  {
+    "Id": 11,
+    "Company": 1,
+    "ParentOperationalUnit": null,
+    "OperationalUnitName": "Front of House",
+    "Active": true,
+    "RosterActive": true,
+    "ShowOnRoster": true,
+    "Address": 301,
+    "Contact": 401
+  },
+  {
+    "Id": 12,
+    "Company": 1,
+    "ParentOperationalUnit": null,
+    "OperationalUnitName": "Kitchen",
+    "Active": true,
+    "RosterActive": true,
+    "ShowOnRoster": true,
+    "Address": 301,
+    "Contact": 402
+  }
+]
