@@ -61,10 +61,8 @@ def _posted_body(route: respx.Route) -> Any:
 
 
 def _mock_whoami(deputy_api: respx.MockRouter, make_whoami: PayloadFactory) -> None:
-    """Wire the WhoAmI probe used to resolve the caller's own employee id."""
-    deputy_api.get("/resource/Account/WhoAmI").mock(
-        return_value=httpx.Response(200, json=make_whoami())
-    )
+    """Wire the ``/api/v1/me`` probe used to resolve the caller's own employee id."""
+    deputy_api.get("/me").mock(return_value=httpx.Response(200, json=make_whoami()))
 
 
 # -- the write gate (green: raises before any HTTP call) ---------------------
@@ -433,25 +431,16 @@ async def test_clock_out_finds_in_progress_timesheet(
     make_whoami: PayloadFactory,
     make_timesheet: PayloadFactory,
 ) -> None:
-    _mock_whoami(deputy_api, make_whoami)
-    query_route = deputy_api.post("/resource/Timesheet/QUERY").mock(
-        return_value=httpx.Response(
-            200, json=[make_timesheet(Id=7200, EndTime=None, IsInProgress=True)]
-        )
+    # The in-progress timesheet is read from /me's InProgressTS (reachable by any employee
+    # token), not the admin Timesheet/QUERY that 403s for a shift worker.
+    deputy_api.get("/me").mock(
+        return_value=httpx.Response(200, json=make_whoami(InProgressTS=7200))
     )
     end_route = deputy_api.post("/supervise/timesheet/end").mock(
         return_value=httpx.Response(200, json=make_timesheet(Id=7200))
     )
-    await write_client.clock_out()
-    assert _posted_body(query_route) == {
-        "search": {
-            "s1": {"field": "Employee", "type": "eq", "data": 101},
-            "s2": {"field": "IsInProgress", "type": "eq", "data": True},
-        },
-        "sort": {"StartTime": "desc"},
-        "max": 50,
-        "start": 0,
-    }
+    result = await write_client.clock_out()
+    assert result.Id == 7200
     assert _posted_body(end_route) == {"intTimesheetId": 7200}
 
 
@@ -460,35 +449,8 @@ async def test_clock_out_no_in_progress_timesheet_errors(
     deputy_api: respx.MockRouter,
     make_whoami: PayloadFactory,
 ) -> None:
-    _mock_whoami(deputy_api, make_whoami)
-    deputy_api.post("/resource/Timesheet/QUERY").mock(return_value=httpx.Response(200, json=[]))
+    # /me carries no InProgressTS -> the caller is not clocked in -> actionable error.
+    deputy_api.get("/me").mock(return_value=httpx.Response(200, json=make_whoami()))
     with pytest.raises(DeputyError) as exc:
         await write_client.clock_out()
     assert "in-progress" in str(exc.value).lower()
-
-
-async def test_clock_out_multiple_in_progress_is_ambiguous(
-    write_client: DeputyClient,
-    deputy_api: respx.MockRouter,
-    make_whoami: PayloadFactory,
-    make_timesheet: PayloadFactory,
-) -> None:
-    # Two open timesheets: clocking out only the newest and leaving the older running
-    # is a payroll hazard, so the auto-resolve path must error (the tool promises to).
-    _mock_whoami(deputy_api, make_whoami)
-    deputy_api.post("/resource/Timesheet/QUERY").mock(
-        return_value=httpx.Response(
-            200,
-            json=[
-                make_timesheet(Id=7300, EndTime=None, IsInProgress=True),
-                make_timesheet(Id=7299, EndTime=None, IsInProgress=True),
-            ],
-        )
-    )
-    end_route = deputy_api.post("/supervise/timesheet/end").mock(
-        return_value=httpx.Response(200, json=make_timesheet(Id=7300))
-    )
-    with pytest.raises(DeputyError) as exc:
-        await write_client.clock_out()
-    assert "unambiguously" in str(exc.value).lower()
-    assert not end_route.called  # nothing was clocked out

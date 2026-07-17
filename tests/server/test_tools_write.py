@@ -41,7 +41,8 @@ def _wire(
     """Wire the write endpoints (plus the reads a write path needs)."""
     wire_write_api(
         router,
-        whoami=make_whoami(),
+        # clock_out reads the in-progress timesheet from /me's InProgressTS.
+        whoami=make_whoami(InProgressTS=8001),
         company=make_company(),
         swap={
             "Id": 555,
@@ -210,9 +211,7 @@ async def test_permission_error_surfaces_as_text(
     make_whoami: Any,
     make_company: Any,
 ) -> None:
-    deputy_api.get("/resource/Account/WhoAmI").mock(
-        return_value=httpx.Response(200, json=make_whoami())
-    )
+    deputy_api.get("/me").mock(return_value=httpx.Response(200, json=make_whoami()))
     deputy_api.post("/resource/OperationalUnit/QUERY").mock(
         return_value=httpx.Response(200, json=[])
     )

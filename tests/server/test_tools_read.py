@@ -110,6 +110,117 @@ async def test_whoami_tool_markdown(
     assert "Europe/Dublin" in text
 
 
+async def test_whoami_reports_clocked_in_and_calendar(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """/me's InProgressTS + CalendarURL enrich whoami with clock state and the iCal feed."""
+    cal = "https://cloud-nine-cafe.eu.deputy.com/ical/abc123.ics"
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(InProgressTS=5551, CalendarURL=cal),
+        company=make_company(),
+        employees=sample_employees,
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+    )
+    server = create_server()
+    async with Client(server) as client:
+        md = tool_text(await client.call_tool("deputy_whoami", {}))
+        js = tool_text(await client.call_tool("deputy_whoami", {"response_format": "json"}))
+    assert "Clocked in now: yes" in md
+    assert cal in md
+    parsed = json.loads(js)
+    assert parsed["clocked_in"] is True
+    assert parsed["calendar_url"] == cal
+
+
+async def test_get_my_calendar_url_returns_link(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """The dedicated tool surfaces the /me CalendarURL in both formats."""
+    cal = "https://cloud-nine-cafe.eu.deputy.com/ical/abc123.ics"
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(CalendarURL=cal),
+        company=make_company(),
+        employees=sample_employees,
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+    )
+    server = create_server()
+    async with Client(server) as client:
+        md = tool_text(await client.call_tool("deputy_get_my_calendar_url", {}))
+        js = tool_text(
+            await client.call_tool("deputy_get_my_calendar_url", {"response_format": "json"})
+        )
+    assert cal in md
+    assert json.loads(js)["calendar_url"] == cal
+
+
+async def test_get_my_calendar_url_absent_is_graceful(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """When /me exposes no CalendarURL the tool explains that, without erroring."""
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(),  # no CalendarURL
+        company=make_company(),
+        employees=sample_employees,
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+    )
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("deputy_get_my_calendar_url", {})
+        js = tool_text(
+            await client.call_tool("deputy_get_my_calendar_url", {"response_format": "json"})
+        )
+    assert not result.is_error
+    assert "does not expose" in tool_text(result)
+    assert json.loads(js)["calendar_url"] is None
+
+
+async def test_manager_tool_permission_error_redirects(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+) -> None:
+    """A 403 from a manager-only tool becomes guidance pointing at the self-service tools."""
+    deputy_api.get("/me").mock(return_value=httpx.Response(200, json=make_whoami()))
+    deputy_api.post("/resource/Roster/QUERY").mock(
+        return_value=httpx.Response(403, json={"error": {"code": 403, "message": "Access denied"}})
+    )
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("deputy_get_team_roster", {})
+    text = tool_text(result)
+    assert not result.is_error
+    assert text.startswith("Error:")
+    assert "manager or administrator access level" in text
+    assert "deputy_get_my_roster" in text
+    assert "Traceback" not in text
+
+
 @pytest.mark.parametrize(
     ("tool", "args", "expected"),
     [
@@ -340,7 +451,8 @@ async def test_who_is_working_json_has_both_lists(
 # Error surface: actionable string, not a traceback
 # --------------------------------------------------------------------------- #
 async def test_bad_token_surfaces_actionable_text(deputy_api: respx.MockRouter) -> None:
-    deputy_api.get("/resource/Account/WhoAmI").mock(return_value=httpx.Response(401))
+    # Identity now resolves from /me first, so a rejected token 401s there.
+    deputy_api.get("/me").mock(return_value=httpx.Response(401))
     server = create_server()
     async with Client(server) as client:
         result = await client.call_tool("deputy_whoami", {})

@@ -8,7 +8,7 @@
 
 > PyPI: coming soon. Until the first release is published, install from source (see [Quickstart](#quickstart)).
 
-deputy-mcp exposes Deputy's workforce data to a language model through the [Model Context Protocol](https://modelcontextprotocol.io): nine read tools for schedules, timesheets, people and locations, plus five write tools (clock in/out, claim an open shift, request a swap, set unavailability) that stay hidden until you explicitly opt in. It runs locally, talks only to your own Deputy install, and inherits exactly the permissions of the token you give it.
+deputy-mcp exposes Deputy's workforce data to a language model through the [Model Context Protocol](https://modelcontextprotocol.io): ten read tools for schedules, timesheets, people, locations and your calendar feed — the self-service ones work on any employee token, the team/manager ones need an elevated access level — plus five write tools (clock in/out, claim an open shift, request a swap, set unavailability) that stay hidden until you explicitly opt in. It runs locally, talks only to your own Deputy install, and inherits exactly the permissions of the token you give it.
 
 ---
 
@@ -24,6 +24,8 @@ You need two things before connecting: a **Deputy API token** and your **base UR
 
 - **Token** — in Deputy, go to **Business settings → Integrations → API access**, create a **New OAuth Client**, then **Get an Access Token** (Deputy shows it once — copy it). This is a permanent token; it inherits your own Deputy permissions.
 - **Base URL** — the address you see in the browser when you are logged in to Deputy, e.g. `https://your-company.eu.deputy.com`. The pattern is `https://{install}.{geo}.deputy.com` (`geo` is your region, such as `au`, `eu`, `uk`, `na`). A trailing slash or an `/api/v1` suffix is accepted and normalized away.
+
+> **Getting a token — the honest version.** Creating a Deputy API token needs an **admin / System Administrator** access level: Deputy's token-creation page (`/exec/devapp/oauth_clients`, reached via **Business settings → Integrations**) is admin-only, and a regular employee account cannot self-mint one — verified against a live install, where a non-admin sees "you do not have access to this application". If you are not an admin on your workplace's Deputy, either use your own Deputy install or a free trial (where you are the admin) or ask your workplace's Deputy administrator to issue you a token. This is how Deputy works, not a limit of this tool — and once you have a token, every self-service tool below works at a plain employee access level.
 
 ### Claude Code
 
@@ -116,19 +118,27 @@ Next shift: 2026-07-18 09:00-17:00 UTC  Alex Rivera
 
 Every tool accepts a `response_format` argument — `"markdown"` (human-readable, the default) or `"json"` (raw records). Optional arguments are marked `?`. Read tools never mutate Deputy.
 
-### Read tools (always available)
+Read tools split by the Deputy access level they require. On a plain **employee** token the manager/admin tools do not fail cryptically — they return a clear "needs a manager/admin access level" message and point you back to the self-service tools that do work for you.
+
+### Self-service read tools (any employee token)
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `deputy_whoami` | — | Who the token authenticates as, plus company/location and its timezone. Run this first to confirm setup. |
+| `deputy_whoami` | — | Who the token authenticates as, plus company/location and its timezone, whether you are clocked in right now, and your personal calendar feed. Run this first to confirm setup. |
 | `deputy_get_my_roster` | `start_date?`, `end_date?` | Your own scheduled shifts in a date range (defaults to today through +7 days). |
+| `deputy_next_shift` | `employee?` | Your single next upcoming shift. Omit `employee` for yourself; naming another person needs a manager/admin access level. |
+| `deputy_get_my_timesheets` | `start_date?`, `end_date?` | Your own timesheets — actual worked time — with a worked-hours total (defaults to the last 7 days). |
+| `deputy_get_my_calendar_url` | — | Your personal Deputy iCal subscription URL. Add it once to Google, Apple or Outlook Calendar to see your shifts there, auto-refreshing as your roster changes. |
+| `deputy_get_areas` | — | The areas (operational units / work locations) you work, with their ids. On an employee token these are derived from your own roster; a manager/admin token lists every area on the install. |
+
+### Manager / admin read tools (needs an elevated access level)
+
+| Tool | Arguments | Returns |
+|------|-----------|---------|
 | `deputy_get_team_roster` | `date?`, `start_date?`, `end_date?`, `area_id?` | Every scheduled shift in a range (or a single `date`), optionally scoped to one area. |
-| `deputy_who_is_working` | `at?` | Snapshot at an instant (default now): who is clocked in vs who is rostered on. |
+| `deputy_who_is_working` | `at?` | Snapshot at an instant (default now): who across the team is clocked in vs who is rostered on. |
 | `deputy_get_employee_info` | `name_or_id` | Profile(s) for employees matching a name substring or numeric id, each listed with its id. |
 | `deputy_search_shifts` | `employee?`, `area_id?`, `start_date?`, `end_date?`, `open_only?`, `limit?`, `offset?` | Shifts filtered by person, area, date range and open status; paginated (max 500 per page). |
-| `deputy_get_areas` | — | All areas (operational units / work locations) with their ids. |
-| `deputy_next_shift` | `employee?` | The single next upcoming shift for you (default) or a named/numbered employee. |
-| `deputy_get_my_timesheets` | `start_date?`, `end_date?` | Your own timesheets — actual worked time — with a worked-hours total (defaults to the last 7 days). |
 
 ### Write tools (opt-in)
 
@@ -228,6 +238,8 @@ uv run mypy                    # type-check (strict)
 ```
 
 CI runs the same gates on Linux (Python 3.11/3.12/3.13) and Windows (3.13). The client layer is MCP-free by design, so it stays reusable outside the server.
+
+Deputy's live API surface — endpoints, status codes and response shapes — was verified against a real install to drive the client design, including the self-service (`/api/v1/my/*`, `/api/v1/me`) vs manager/admin (`/api/v1/resource/*/QUERY`) access-level split. The test suite itself runs entirely against mocks; no end-to-end client smoke test has been run yet (that needs a token — see [Getting a token](#quickstart)), so the optional `-m live` suite is provided for anyone who has one and wants to exercise the client against their own instance.
 
 Run the server in a container:
 

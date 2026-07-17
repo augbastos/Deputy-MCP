@@ -27,10 +27,11 @@ __all__ = [
     "wire_write_api",
 ]
 
-#: The nine read tools every server build must expose.
+#: The ten read tools every server build must expose.
 READ_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "deputy_whoami",
+        "deputy_get_my_calendar_url",
         "deputy_get_my_roster",
         "deputy_get_team_roster",
         "deputy_who_is_working",
@@ -91,6 +92,9 @@ def wire_read_api(
     clocked-in half. That is fine for smoke coverage -- the tool wiring, argument
     handling and rendering are what these tests assert.
     """
+    # The re-architected client resolves identity from /me first (works at any access
+    # level); /resource/Account/WhoAmI stays wired as the legacy 404 fallback.
+    router.get("/me").mock(return_value=_ok(whoami))
     router.get("/resource/Account/WhoAmI").mock(return_value=_ok(whoami))
     router.get("/my/roster").mock(return_value=_ok(rosters))
     router.get("/my/timesheets").mock(return_value=_ok(timesheets))
@@ -119,6 +123,9 @@ def wire_write_api(
     open_roster: dict[str, Any] | None = None,
 ) -> None:
     """Register every write endpoint (plus the reads a write path needs)."""
+    # Write paths resolve the caller via /me first (any access level); keep the legacy
+    # /resource/Account/WhoAmI route as the 404 fallback.
+    router.get("/me").mock(return_value=_ok(whoami))
     router.get("/resource/Account/WhoAmI").mock(return_value=_ok(whoami))
     router.post("/resource/Company/QUERY").mock(return_value=_ok([company]))
     router.post("/resource/OperationalUnit/QUERY").mock(return_value=_ok(operational_units or []))
