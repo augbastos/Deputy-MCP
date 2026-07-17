@@ -272,7 +272,9 @@ class ReadsMixin:
             builder.where("Date", "le", end.isoformat())
         builder.join(EMPLOYEE_JOIN).sort("StartTime")
         builder.max(page_size).start(max(0, offset))
-        records = await query_all(self._http, "Roster", builder, hard_limit=page_size)
+        records = await query_all(
+            self._http, "Roster", builder, hard_limit=page_size, warn_on_truncate=False
+        )
         return _as_models(records, Roster)
 
     async def next_shift(self, employee_id: int | None = None) -> Roster | None:
@@ -290,7 +292,9 @@ class ReadsMixin:
             .sort("StartTime")
             .max(1)
         )
-        records = await query_all(self._http, "Roster", builder, hard_limit=1)
+        records = await query_all(
+            self._http, "Roster", builder, hard_limit=1, warn_on_truncate=False
+        )
         rosters = _as_models(records, Roster)
         return rosters[0] if rosters else None
 

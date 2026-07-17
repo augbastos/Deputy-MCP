@@ -180,6 +180,7 @@ async def query_all(
     object_name: str,
     builder: QueryBuilder,
     hard_limit: int = 2000,
+    warn_on_truncate: bool = True,
 ) -> list[dict[str, Any]]:
     """Run a QUERY and auto-paginate past the 500-record cap.
 
@@ -193,7 +194,9 @@ async def query_all(
     When the walk stops because ``hard_limit`` was reached while Deputy was still
     returning full pages, the result is silently *truncated* -- more records exist. That
     case is logged as a warning so a caller (or operator) is not misled into treating a
-    capped roster/timesheet list as the complete set.
+    capped roster/timesheet list as the complete set. Callers that cap on purpose (a
+    top-N query, or a paginated tool that reports ``has_more`` itself) pass
+    ``warn_on_truncate=False`` because hitting their cap is the expected outcome.
     """
     body = builder.build()
     page_size = min(int(body.get("max", MAX_PAGE)), MAX_PAGE)
@@ -220,7 +223,7 @@ async def query_all(
             break
         offset += page_size
 
-    if truncated:
+    if truncated and warn_on_truncate:
         logger.warning(
             "query_all truncated %s results at hard_limit=%d; more records exist. "
             "Narrow the query (e.g. a shorter date range or an area filter) or raise "
