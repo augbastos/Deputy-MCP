@@ -38,6 +38,7 @@ __all__ = [
     "fmt_ts",
     "render",
     "render_areas",
+    "render_calendar_url",
     "render_employee_list",
     "render_next_shift",
     "render_roster_list",
@@ -284,8 +285,19 @@ def render_next_shift(
     )
 
 
-def render_whoami(who: Any, company: Company | None, tz_label: str) -> str:
-    """Render the WhoAmI + company sanity-check summary."""
+def render_whoami(
+    who: Any,
+    company: Company | None,
+    tz_label: str,
+    *,
+    clocked_in: bool | None = None,
+    calendar_url: str | None = None,
+) -> str:
+    """Render the WhoAmI + company sanity-check summary.
+
+    ``clocked_in`` adds a live "on the clock" line (from ``/me``'s in-progress timesheet)
+    when provided; ``calendar_url`` adds the personal iCal subscription link when present.
+    """
     extra = getattr(who, "model_extra", None) or {}
     name = extra.get("Name") or extra.get("DisplayName") or extra.get("FirstName") or "unknown"
     company_name = None
@@ -298,4 +310,23 @@ def render_whoami(who: Any, company: Company | None, tz_label: str) -> str:
         f"- Company/location: {company_name or 'unknown'}",
         f"- Timezone: {tz_label}",
     ]
+    if clocked_in is not None:
+        lines.append(f"- Clocked in now: {'yes' if clocked_in else 'no'}")
+    if calendar_url:
+        lines.append(f"- Calendar feed (iCal subscription): {calendar_url}")
     return "\n".join(lines)
+
+
+def render_calendar_url(url: str | None) -> str:
+    """Render the personal iCal subscription link (or a graceful 'none' note)."""
+    if not url:
+        return (
+            "### My calendar feed\n\n_This Deputy install does not expose a personal iCal "
+            "calendar URL for your account._"
+        )
+    return (
+        "### My calendar feed\n\n"
+        "Add this iCal subscription link to your calendar app (Google Calendar, Apple "
+        "Calendar, Outlook) to see your shifts:\n\n"
+        f"- {url}"
+    )

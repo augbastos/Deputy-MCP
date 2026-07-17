@@ -30,11 +30,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from deputy_mcp.client.errors import DeputyError, DeputyWritesDisabledError
 from deputy_mcp.client.models import DeputyModel, Roster, RosterSwap, Timesheet, Unavailability
-from deputy_mcp.client.query import QueryBuilder, query_all
+from deputy_mcp.client.reads import in_progress_timesheet_id
 
 if TYPE_CHECKING:
     from deputy_mcp.client.http import DeputyHTTP
-    from deputy_mcp.client.models import OperationalUnit
+    from deputy_mcp.client.models import OperationalUnit, WhoAmI
 
 __all__ = ["WritesMixin"]
 
@@ -74,6 +74,8 @@ class WritesMixin:
         async def own_employee_id(self) -> int: ...
 
         async def get_operational_units(self) -> list[OperationalUnit]: ...
+
+        async def whoami(self) -> WhoAmI: ...
 
     # -- public write operations -------------------------------------------
 
@@ -281,9 +283,9 @@ class WritesMixin:
 
         ``POST /supervise/timesheet/end`` keyed by ``intTimesheetId``, with optional
         ``intMealbreakMinute`` (deputy-api-write.md §4). When ``timesheet_id`` is
-        omitted, the current user's single in-progress timesheet is looked up first
-        (``Timesheet`` QUERY on ``Employee`` + ``IsInProgress`` true); a clear error is
-        raised when none exists.
+        omitted, the current user's in-progress timesheet is read from ``InProgressTS`` on
+        ``GET /api/v1/me`` (which a plain employee token can reach, unlike
+        ``Timesheet/QUERY``); a clear error is raised when the caller is not clocked in.
 
         Args:
             timesheet_id: ``Timesheet.Id`` to end. When ``None``, resolved from the
@@ -351,38 +353,21 @@ class WritesMixin:
         return _as_model(data, Roster)
 
     async def _find_in_progress_timesheet(self) -> int:
-        """Find the current user's single open (in-progress) timesheet id.
+        """Find the current user's single open (in-progress) timesheet id via ``/me``.
 
-        Raises when there is none *or* when more than one is open: clocking out the
-        newest and silently leaving the others running would be a payroll hazard, and
-        the tool promises to error when the situation is ambiguous.
+        ``GET /api/v1/me`` carries ``InProgressTS`` — the caller's currently-running
+        timesheet — and works for a plain employee token. The previous approach queried
+        ``Timesheet/QUERY`` filtered by employee id, which 403s ("Access to object-type
+        denied") for a non-admin employee, so clock-out was broken for its primary
+        audience. ``/me`` exposes exactly the caller's single in-progress timesheet, so the
+        old "more than one open" ambiguity cannot arise here. Raises when the caller is
+        not clocked in.
         """
-        employee_id = await self.own_employee_id()
-        builder = (
-            QueryBuilder()
-            .where("Employee", "eq", employee_id)
-            .where("IsInProgress", "eq", True)
-            .sort("StartTime", desc=True)
-            .max(50)
-        )
-        records = await query_all(self._http, "Timesheet", builder, hard_limit=50)
-        if not records:
+        timesheet_id = in_progress_timesheet_id(await self.whoami())
+        if timesheet_id is None:
             raise DeputyError(
                 "No in-progress timesheet found to clock out of.",
                 hint="Clock in first, or pass an explicit timesheet_id.",
-            )
-        if len(records) > 1:
-            open_ids = [r.get("Id") for r in records]
-            raise DeputyError(
-                f"Found {len(records)} in-progress timesheets ({open_ids}); "
-                "cannot choose one unambiguously.",
-                hint="Pass an explicit timesheet_id to clock out the intended timesheet.",
-            )
-        timesheet_id = records[0].get("Id")
-        if not isinstance(timesheet_id, int):
-            raise DeputyError(
-                "The in-progress timesheet is missing a usable Id.",
-                hint="Pass an explicit timesheet_id to clock out.",
             )
         return timesheet_id
 

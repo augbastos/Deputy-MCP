@@ -34,6 +34,10 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "python-dotenv>=1.0",
+    # Ships the IANA tz database for zoneinfo.ZoneInfo. Windows and slim Linux
+    # images have no system tzdb, so the iCal roster parser (client/ical.py)
+    # would silently fall back to UTC and mislabel local shift times without it.
+    "tzdata>=2024.1",
 ]
 
 [project.scripts]

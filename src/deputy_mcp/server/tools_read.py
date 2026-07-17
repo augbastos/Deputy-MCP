@@ -15,19 +15,32 @@ process lifetime (see :mod:`deputy_mcp.server.app`).
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta, tzinfo
+from datetime import timedelta, tzinfo
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
 
 from deputy_mcp.client import DeputyClient, DeputyError
+from deputy_mcp.client.whoami import (
+    whoami_calendar_url,
+    whoami_company_name,
+    whoami_is_clocked_in,
+)
+from deputy_mcp.server._read_helpers import (
+    format_error,
+    opt_date,
+    parse_date,
+    parse_dt,
+    today,
+)
 from deputy_mcp.server.formatting import (
     ResponseFormat,
     areas_by_id,
     employee_display,
     render,
     render_areas,
+    render_calendar_url,
     render_employee_list,
     render_next_shift,
     render_roster_list,
@@ -46,52 +59,6 @@ ClientProvider = Callable[[], DeputyClient]
 _FORMAT_FIELD = Field(
     description="Output format: 'markdown' (human-readable, default) or 'json' (raw records)."
 )
-
-
-def _error(exc: DeputyError) -> str:
-    """Format a client error as an actionable, traceback-free message."""
-    text = f"Error: {exc.message}"
-    if exc.hint:
-        text += f"\nHint: {exc.hint}"
-    return text
-
-
-def _today() -> date:
-    """Return today's date in UTC (used as a range default)."""
-    return datetime.now(UTC).date()
-
-
-def _parse_date(value: str | None, default: date) -> date:
-    """Parse an ISO ``YYYY-MM-DD`` string, or return ``default`` when blank."""
-    if value is None or not value.strip():
-        return default
-    try:
-        return date.fromisoformat(value.strip())
-    except ValueError as exc:
-        raise DeputyError(
-            f"Invalid date '{value}'.", hint="Use ISO format YYYY-MM-DD, e.g. 2026-07-18."
-        ) from exc
-
-
-def _opt_date(value: str | None) -> date | None:
-    """Parse an optional ISO date, returning ``None`` when blank."""
-    if value is None or not value.strip():
-        return None
-    return _parse_date(value, _today())
-
-
-def _parse_dt(value: str | None) -> datetime | None:
-    """Parse an ISO date/datetime string into an aware UTC datetime, or ``None``."""
-    if value is None or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip())
-    except ValueError as exc:
-        raise DeputyError(
-            f"Invalid datetime '{value}'.",
-            hint="Use ISO format, e.g. 2026-07-18T14:30 (UTC assumed if no offset).",
-        ) from exc
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
 
 
 async def resolve_client_timezone(client: DeputyClient) -> tuple[tzinfo, str]:
@@ -155,14 +122,18 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
     ) -> str:
         """Verify the Deputy connection and confirm which identity the token uses.
 
-        Returns who the API token authenticates as, plus the company/location and its
-        timezone. Run this first to confirm setup before other tools.
+        Returns who the API token authenticates as, the company/location and its timezone,
+        whether that user is clocked in right now (from their in-progress timesheet), and
+        their personal iCal calendar subscription URL when the install exposes one. Run
+        this first to confirm setup before other tools.
 
         When NOT to use: to read schedules or people (use deputy_get_my_roster or
         deputy_get_employee_info) — this only checks the connection and identity.
 
-        Returns markdown (a connection summary: signed-in name, company, timezone) or,
-        with response_format="json", an object ``{"whoami", "company", "timezone"}``.
+        Returns markdown (a connection summary: signed-in name, company, timezone, whether
+        clocked in, and the calendar feed) or, with response_format="json", an object
+        ``{"whoami", "company", "timezone", "company_name", "clocked_in", "calendar_url"}``
+        where ``clocked_in`` is a bool and ``calendar_url`` is a string or null.
         """
         client = get_client()
         try:
@@ -172,10 +143,53 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             except DeputyError:
                 company = None
             _, tz_label = resolve_timezone(company)
-            data = {"whoami": who, "company": company, "timezone": tz_label}
-            return render(data, lambda: render_whoami(who, company, tz_label), response_format)
+            clocked_in = whoami_is_clocked_in(who)
+            calendar_url = whoami_calendar_url(who)
+            company_name = (
+                company.CompanyName or company.TradingName if company is not None else None
+            ) or whoami_company_name(who)
+            data = {
+                "whoami": who,
+                "company": company,
+                "timezone": tz_label,
+                "company_name": company_name,
+                "clocked_in": clocked_in,
+                "calendar_url": calendar_url,
+            }
+            return render(
+                data,
+                lambda: render_whoami(
+                    who, company, tz_label, clocked_in=clocked_in, calendar_url=calendar_url
+                ),
+                response_format,
+            )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
+
+    @mcp.tool(name="deputy_get_my_calendar_url", annotations=read_only)
+    async def deputy_get_my_calendar_url(
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
+    ) -> str:
+        """Return the signed-in user's personal Deputy calendar (iCal) subscription URL.
+
+        Deputy publishes a per-user, read-only iCal feed of your roster (the CalendarURL
+        on /api/v1/me). Add the returned link to any calendar app (Google Calendar, Apple
+        Calendar, Outlook) to see your shifts there; it stays in sync as your roster
+        changes. Works at any access level — it reads only your own /me record.
+
+        When NOT to use: to read the shifts themselves here (use deputy_get_my_roster or
+        deputy_next_shift) — this only returns the subscription link.
+
+        Returns markdown (the subscription link, or a note that this install exposes none)
+        or, with response_format="json", an object ``{"calendar_url"}`` whose value is a
+        string or null.
+        """
+        client = get_client()
+        try:
+            url = whoami_calendar_url(await client.whoami())
+            return render({"calendar_url": url}, lambda: render_calendar_url(url), response_format)
+        except DeputyError as exc:
+            return format_error(exc)
 
     @mcp.tool(name="deputy_get_my_roster", annotations=read_only)
     async def deputy_get_my_roster(
@@ -196,8 +210,8 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         """
         client = get_client()
         try:
-            start = _parse_date(start_date, _today())
-            end = _parse_date(end_date, start + timedelta(days=7))
+            start = parse_date(start_date, today())
+            end = parse_date(end_date, start + timedelta(days=7))
             rosters = await client.get_my_roster(start, end)
             tz, label = await resolve_client_timezone(client)
             areas = await _area_map(client)
@@ -208,7 +222,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 response_format,
             )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_get_team_roster", annotations=read_only)
     async def deputy_get_team_roster(
@@ -233,10 +247,10 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         client = get_client()
         try:
             if date is not None and date.strip():
-                start = end = _parse_date(date, _today())
+                start = end = parse_date(date, today())
             else:
-                start = _parse_date(start_date, _today())
-                end = _parse_date(end_date, start + timedelta(days=7))
+                start = parse_date(start_date, today())
+                end = parse_date(end_date, start + timedelta(days=7))
             rosters = await client.get_team_roster(start, end, area_id)
             tz, label = await resolve_client_timezone(client)
             areas = await _area_map(client)
@@ -247,7 +261,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 response_format,
             )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_who_is_working", annotations=read_only)
     async def deputy_who_is_working(
@@ -269,7 +283,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         """
         client = get_client()
         try:
-            moment = _parse_dt(at)
+            moment = parse_dt(at)
             data = await client.who_is_working(moment)
             tz, label = await resolve_client_timezone(client)
             areas = await _area_map(client)
@@ -279,7 +293,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 response_format,
             )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_get_employee_info", annotations=read_only)
     async def deputy_get_employee_info(
@@ -314,7 +328,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 response_format,
             )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_search_shifts", annotations=read_only)
     async def deputy_search_shifts(
@@ -343,8 +357,8 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         client = get_client()
         try:
             employee_id = None if open_only else await _resolve_employee_id(client, employee)
-            start = _opt_date(start_date)
-            end = _opt_date(end_date)
+            start = opt_date(start_date)
+            end = opt_date(end_date)
             rosters = await client.search_shifts(
                 employee_id=employee_id,
                 opunit_id=area_id,
@@ -383,7 +397,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
 
             return render(data, _markdown, response_format)
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_get_areas", annotations=read_only)
     async def deputy_get_areas(
@@ -403,7 +417,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             units = await client.get_operational_units()
             return render(units, lambda: render_areas(units), response_format)
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_next_shift", annotations=read_only)
     async def deputy_next_shift(
@@ -433,7 +447,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 response_format,
             )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
 
     @mcp.tool(name="deputy_get_my_timesheets", annotations=read_only)
     async def deputy_get_my_timesheets(
@@ -454,8 +468,8 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         """
         client = get_client()
         try:
-            end = _parse_date(end_date, _today())
-            start = _parse_date(start_date, end - timedelta(days=7))
+            end = parse_date(end_date, today())
+            start = parse_date(start_date, end - timedelta(days=7))
             timesheets = await client.get_my_timesheets(start, end)
             tz, label = await resolve_client_timezone(client)
             areas = await _area_map(client)
@@ -466,4 +480,4 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 response_format,
             )
         except DeputyError as exc:
-            return _error(exc)
+            return format_error(exc)
