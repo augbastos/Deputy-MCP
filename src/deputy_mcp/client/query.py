@@ -25,9 +25,12 @@ bools and lists).
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol
 
 __all__ = ["VALID_OPS", "QueryBuilder", "query_all"]
+
+logger = logging.getLogger(__name__)
 
 #: Operator codes accepted by the QUERY ``type`` field, per the read-notes table.
 #: (The design lists eleven; ``nk`` — NOT LIKE — is added to match the documented API.)
@@ -63,6 +66,7 @@ class _HTTPRequester(Protocol):
         json_body: Any | None = None,
         params: dict[str, Any] | None = None,
         cacheable: bool = False,
+        idempotent: bool = False,
     ) -> Any: ...
 
 
@@ -183,7 +187,13 @@ async def query_all(
     ``start`` offsets in ``max``-sized pages until a short page is returned or ``hard_limit``
     records have been collected. Returns the flattened record list (never more than
     ``hard_limit``). Deputy QUERY responses are JSON arrays; a non-list response ends
-    pagination defensively.
+    pagination defensively. The QUERY POST is marked idempotent so it retries on
+    transient failures like a read (it never mutates anything).
+
+    When the walk stops because ``hard_limit`` was reached while Deputy was still
+    returning full pages, the result is silently *truncated* -- more records exist. That
+    case is logged as a warning so a caller (or operator) is not misled into treating a
+    capped roster/timesheet list as the complete set.
     """
     body = builder.build()
     page_size = min(int(body.get("max", MAX_PAGE)), MAX_PAGE)
@@ -193,13 +203,29 @@ async def query_all(
     path = f"/resource/{object_name}/QUERY"
 
     results: list[dict[str, Any]] = []
-    while len(results) < hard_limit:
+    truncated = False
+    while True:
+        if len(results) >= hard_limit:
+            # Reached only after a full page asked for another loop: more records exist.
+            truncated = True
+            break
         page_body = {**body, "max": page_size, "start": offset}
-        page = await http.request("POST", path, json_body=page_body, cacheable=True)
+        page = await http.request(
+            "POST", path, json_body=page_body, cacheable=True, idempotent=True
+        )
         if not isinstance(page, list):
             break
         results.extend(record for record in page if isinstance(record, dict))
         if len(page) < page_size:
             break
         offset += page_size
+
+    if truncated:
+        logger.warning(
+            "query_all truncated %s results at hard_limit=%d; more records exist. "
+            "Narrow the query (e.g. a shorter date range or an area filter) or raise "
+            "hard_limit to retrieve the full set.",
+            object_name,
+            hard_limit,
+        )
     return results[:hard_limit]

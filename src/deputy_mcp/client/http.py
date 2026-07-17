@@ -39,6 +39,12 @@ from deputy_mcp.config import DeputyConfig
 #: HTTP statuses that are safe to retry (throttling + transient upstream).
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
 
+#: Methods that are idempotent by definition, so replaying them cannot double-apply a
+#: mutation. Deputy models every write as a POST, so a bare POST is treated as
+#: non-idempotent and is never retried; read POSTs (the ``/QUERY`` DSL) opt back in by
+#: passing ``idempotent=True`` explicitly.
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 #: Sentinel distinguishing a cache miss from a cached ``None`` value.
 _MISS: Any = object()
 
@@ -77,6 +83,7 @@ class DeputyHTTP:
         json_body: Any | None = None,
         params: dict[str, Any] | None = None,
         cacheable: bool = False,
+        idempotent: bool = False,
     ) -> Any:
         """Perform a request and return parsed JSON (or ``None`` if empty).
 
@@ -87,11 +94,17 @@ class DeputyHTTP:
             params: Optional query-string parameters.
             cacheable: When true (read paths), serve from / store in the TTL
                 cache. Ignored when ``cache_ttl`` is 0.
+            idempotent: When true, the request is safe to replay, so it is retried
+                on throttling/transient failures even if it is a POST (used by the
+                read-only ``/QUERY`` DSL). ``GET``/``HEAD``/``OPTIONS`` are always
+                treated as idempotent; a bare write POST is not, so it is never
+                retried (retrying a write could double-apply the mutation).
 
         Raises:
             DeputyError: A mapped subclass on any non-2xx response, transport
                 failure, or connection/DNS error.
         """
+        retryable = idempotent or method.upper() in _IDEMPOTENT_METHODS
         use_cache = cacheable and self._config.cache_ttl > 0
         key = _cache_key(method, path, params, json_body) if use_cache else None
         if key is not None:
@@ -108,8 +121,11 @@ class DeputyHTTP:
                 # install name or geo. Surface it as a region error, no retry.
                 raise DeputyRegionError() from exc
             except httpx.TransportError as exc:
-                # Timeouts and other network blips: retry, then give up.
-                if attempt < self._config.max_retries:
+                # Timeouts and other network blips: retry idempotent requests, then
+                # give up. A non-idempotent write is NOT retried -- the timeout may
+                # have masked a response for a mutation Deputy already applied, so a
+                # blind replay could create a duplicate (e.g. a second clock-in).
+                if retryable and attempt < self._config.max_retries:
                     await self._sleep(self._backoff_delay(attempt, None))
                     attempt += 1
                     continue
@@ -125,7 +141,10 @@ class DeputyHTTP:
                     self._cache_set(key, data)
                 return data
 
-            if status in _RETRY_STATUSES and attempt < self._config.max_retries:
+            # Only replay idempotent requests on a retryable status. A write POST
+            # that draws a 429/503 mid-processing must not be re-sent blindly, since
+            # Deputy may already have applied it (duplicate mutation otherwise).
+            if status in _RETRY_STATUSES and retryable and attempt < self._config.max_retries:
                 await self._sleep(self._backoff_delay(attempt, _retry_after(response)))
                 attempt += 1
                 continue

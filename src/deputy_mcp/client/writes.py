@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from deputy_mcp.client.errors import DeputyError, DeputyWritesDisabledError
-from deputy_mcp.client.models import DeputyModel, RosterSwap, Timesheet, Unavailability
+from deputy_mcp.client.models import DeputyModel, Roster, RosterSwap, Timesheet, Unavailability
 from deputy_mcp.client.query import QueryBuilder, query_all
 
 if TYPE_CHECKING:
@@ -87,6 +87,16 @@ class WritesMixin:
         This bypasses the UI's employee-request workflow, so it needs a token whose
         Deputy user may edit that roster.
 
+        The roster is read first, for two safety reasons:
+
+        * ``/supervise/roster`` is the same add-or-update endpoint, and its only
+          worked example always carries the shift's ``intStartTimestamp`` /
+          ``intEndTimestamp`` / ``intOpunitId``. Those are echoed back on the update so
+          an upsert cannot blank the shift's time/area.
+        * If the shift is *not* open (a wrong id, or it was filled between listing and
+          claiming), the method refuses rather than silently overwriting whoever is
+          currently assigned -- which keeps ``destructiveHint=false`` truthful.
+
         Args:
             roster_id: ``Roster.Id`` of the open shift to take.
 
@@ -97,19 +107,36 @@ class WritesMixin:
 
         Raises:
             DeputyWritesDisabledError: When ``DEPUTY_ALLOW_WRITES`` is not enabled.
+            DeputyError: The shift is not an open shift (refusing to reassign it), or
+                any other API/transport failure.
             DeputyPermissionError: HTTP 403 -- the user cannot edit this roster (for
                 example a plain employee against an "open shift with approval" area,
                 whose pick-up must be manager-approved via the UI).
             DeputyNotFoundError: HTTP 404 -- no roster with that id.
-            DeputyError: Any other API/transport failure.
         """
         self._require_writes()
         employee_id = await self.own_employee_id()
+        roster = await self._get_roster(roster_id)
+        if not roster.Open:
+            raise DeputyError(
+                f"Shift {roster_id} is not an open shift; refusing to reassign it.",
+                hint=(
+                    "Only unassigned open shifts can be claimed. Check the shift id, or "
+                    "use a shift-swap request to take over an already-assigned shift."
+                ),
+            )
         body: dict[str, Any] = {
             "intRosterId": roster_id,
             "intRosterEmployee": employee_id,
             "blnOpen": 0,
         }
+        # Preserve the shift's existing time/area so a full upsert cannot blank them.
+        if roster.StartTime is not None:
+            body["intStartTimestamp"] = roster.StartTime
+        if roster.EndTime is not None:
+            body["intEndTimestamp"] = roster.EndTime
+        if roster.OperationalUnit is not None:
+            body["intOpunitId"] = roster.OperationalUnit
         await self._http.request("POST", "/supervise/roster", json_body=body)
         self._http.invalidate()
 
@@ -318,8 +345,18 @@ class WritesMixin:
             hint="Pass an explicit area id (opunit_id); list areas with get_operational_units().",
         )
 
+    async def _get_roster(self, roster_id: int) -> Roster:
+        """Read a single roster by id (``GET /resource/Roster/{id}``)."""
+        data = await self._http.request("GET", f"/resource/Roster/{roster_id}", cacheable=True)
+        return _as_model(data, Roster)
+
     async def _find_in_progress_timesheet(self) -> int:
-        """Find the current user's single open (in-progress) timesheet id."""
+        """Find the current user's single open (in-progress) timesheet id.
+
+        Raises when there is none *or* when more than one is open: clocking out the
+        newest and silently leaving the others running would be a payroll hazard, and
+        the tool promises to error when the situation is ambiguous.
+        """
         employee_id = await self.own_employee_id()
         builder = (
             QueryBuilder()
@@ -333,6 +370,13 @@ class WritesMixin:
             raise DeputyError(
                 "No in-progress timesheet found to clock out of.",
                 hint="Clock in first, or pass an explicit timesheet_id.",
+            )
+        if len(records) > 1:
+            open_ids = [r.get("Id") for r in records]
+            raise DeputyError(
+                f"Found {len(records)} in-progress timesheets ({open_ids}); "
+                "cannot choose one unambiguously.",
+                hint="Pass an explicit timesheet_id to clock out the intended timesheet.",
             )
         timesheet_id = records[0].get("Id")
         if not isinstance(timesheet_id, int):

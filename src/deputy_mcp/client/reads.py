@@ -57,18 +57,6 @@ def _now_unix(at: datetime | None) -> str:
     return str(int(moment.timestamp()))
 
 
-def _in_date_range(date_str: str | None, start: date, end: date) -> bool:
-    """Whether a Deputy ``Date`` string falls in ``[start, end]`` (inclusive).
-
-    ISO ``YYYY-MM-DD`` strings sort lexicographically, so a string compare is
-    exact. An unparseable or missing ``Date`` is kept (the caller cannot filter
-    what Deputy did not label).
-    """
-    if not date_str:
-        return True
-    return start.isoformat() <= date_str <= end.isoformat()
-
-
 def _as_models(records: list[dict[str, Any]], model: type[_ModelT]) -> list[_ModelT]:
     """Validate a list of raw Deputy records into typed models."""
     return [model.model_validate(record) for record in records]
@@ -130,14 +118,25 @@ class ReadsMixin:
     async def get_my_roster(self, start: date, end: date) -> list[Roster]:
         """Return the caller's own shifts within ``[start, end]`` (inclusive).
 
-        Reads the documented ``GET /my/roster`` endpoint (the "when am I next
-        working" view) and filters client-side to the requested calendar range,
-        since that endpoint takes no documented range parameters.
+        Uses ``Roster/QUERY`` filtered by the caller's own ``Employee.Id`` and a
+        ``Date`` range (the fallback the design mandates). The documented
+        ``GET /my/roster`` endpoint is the future-only "when am I next working" view:
+        it has no range parameters and cannot answer a past-or-arbitrary range, and
+        its 200 response shape is unverified (an object-wrapped array would be
+        silently coerced to "no shifts"). Querying the Roster resource by employee id
+        avoids both traps and matches :meth:`get_team_roster`.
         """
-        data = await self._http.request("GET", "/my/roster", cacheable=True)
-        records = data if isinstance(data, list) else []
-        rosters = _as_models(records, Roster)
-        return [r for r in rosters if _in_date_range(r.Date, start, end)]
+        employee_id = await self.own_employee_id()
+        builder = (
+            QueryBuilder()
+            .where("Employee", "eq", employee_id)
+            .where("Date", "ge", start.isoformat())
+            .where("Date", "le", end.isoformat())
+            .join(_EMPLOYEE_JOIN)
+            .sort("StartTime")
+        )
+        records = await query_all(self._http, "Roster", builder)
+        return _as_models(records, Roster)
 
     async def get_team_roster(
         self, start: date, end: date, opunit_id: int | None = None
@@ -164,26 +163,39 @@ class ReadsMixin:
         Returns a dict with:
 
         * ``at`` — the ISO instant evaluated (UTC).
-        * ``clocked_in`` — ``list[Timesheet]`` with ``IsInProgress`` true
-          (ground truth: physically on the clock).
-        * ``rostered_now`` — ``list[Roster]`` whose window contains ``at`` and
-          which are not open/unassigned (who is *scheduled* to be on).
+        * ``clocked_in`` — ``list[Timesheet]`` with ``IsInProgress`` true whose
+          ``StartTime`` is at or before ``at`` (physically on the clock as of
+          ``at``, not a clock-in that only started afterwards).
+        * ``rostered_now`` — ``list[Roster]`` whose window contains ``at``, are
+          published (drafts excluded), and are not open/unassigned (who is
+          *scheduled* to be on).
 
-        Scheduled and actual diverge (late clock-in, no-shows); callers decide
-        how to combine them.
+        Both queries honor ``at`` so the two lists describe the same instant.
+        Scheduled and actual diverge (late clock-in, no-shows); callers decide how
+        to combine them.
         """
         moment = at if at is not None else datetime.now(UTC)
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=UTC)
         now = str(int(moment.timestamp()))
 
-        clocked_builder = QueryBuilder().where("IsInProgress", "eq", True).join(_EMPLOYEE_JOIN)
+        # Bound the clock-in signal by ``at`` too: an in-progress timesheet that
+        # started after the requested instant was not on the clock then.
+        clocked_builder = (
+            QueryBuilder()
+            .where("IsInProgress", "eq", True)
+            .where("StartTime", "le", now)
+            .join(_EMPLOYEE_JOIN)
+        )
         clocked_records = await query_all(self._http, "Timesheet", clocked_builder)
 
+        # Published filter excludes draft shifts (deputy-api-read.md §5 Strategy B):
+        # a drafted-but-unpublished shift is not really "scheduled on" right now.
         rostered_builder = (
             QueryBuilder()
             .where("StartTime", "le", now)
             .where("EndTime", "gt", now)
+            .where("Published", "eq", True)
             .where("Open", "ne", True)
             .join(_EMPLOYEE_JOIN)
         )
@@ -280,14 +292,23 @@ class ReadsMixin:
     async def get_my_timesheets(self, start: date, end: date) -> list[Timesheet]:
         """Return the caller's own timesheets within ``[start, end]`` (inclusive).
 
-        Reads the documented ``GET /my/timesheets`` endpoint and filters
-        client-side to the requested calendar range (no documented range
-        parameters on that endpoint).
+        Uses ``Timesheet/QUERY`` filtered by the caller's own ``Employee.Id`` and a
+        ``Date`` range (the design's documented alternative to ``GET /my/timesheets``).
+        The ``/my/timesheets`` endpoint's 200 response shape is unverified, so an
+        object-wrapped array would be silently coerced to "no timesheets"; querying the
+        Timesheet resource by employee id is both range-correct and shape-safe.
         """
-        data = await self._http.request("GET", "/my/timesheets", cacheable=True)
-        records = data if isinstance(data, list) else []
-        sheets = _as_models(records, Timesheet)
-        return [t for t in sheets if _in_date_range(t.Date, start, end)]
+        employee_id = await self.own_employee_id()
+        builder = (
+            QueryBuilder()
+            .where("Employee", "eq", employee_id)
+            .where("Date", "ge", start.isoformat())
+            .where("Date", "le", end.isoformat())
+            .join(_EMPLOYEE_JOIN)
+            .sort("StartTime")
+        )
+        records = await query_all(self._http, "Timesheet", builder)
+        return _as_models(records, Timesheet)
 
     async def get_company(self) -> Company:
         """Return the install's primary company/location (timezone source).
