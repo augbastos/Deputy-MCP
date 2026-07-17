@@ -29,10 +29,12 @@ from deputy_mcp.client.models import (
     Roster,
     Timesheet,
 )
+from deputy_mcp.client.reads import EMPLOYEE_JOIN
 
 __all__ = [
     "ResponseFormat",
     "areas_by_id",
+    "employee_display",
     "fmt_ts",
     "render",
     "render_areas",
@@ -135,8 +137,8 @@ def employee_display(emp: Employee | None) -> str:
 
 
 def _joined_employee(obj: Roster | Timesheet) -> Employee | None:
-    """Extract an eager-loaded ``EmployeeObject`` join, if present."""
-    raw: Any = (obj.model_extra or {}).get("EmployeeObject")
+    """Extract the eager-loaded employee join (see :data:`EMPLOYEE_JOIN`), if present."""
+    raw: Any = (obj.model_extra or {}).get(EMPLOYEE_JOIN)
     if isinstance(raw, list):
         raw = raw[0] if raw else None
     if isinstance(raw, dict):

@@ -98,13 +98,13 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
         When NOT to use: to *offer* a shift to others, or when a manager must approve
         pick-ups (that pathway is UI-only and not exposed here).
 
+        Returns markdown (a confirmation; Deputy returns an empty body on success, so
+        re-read the roster to verify it stuck) or, with response_format="json", the
+        object ``{"shift_id", "claimed"}``.
+
         Args:
             shift_id: The open shift's ``Roster.Id``.
             response_format: ``markdown`` (default) or ``json``.
-
-        Returns:
-            A confirmation. Deputy returns an empty body on success, so re-read the
-            roster if you need to verify the assignment stuck.
         """
         try:
             client = get_client()
@@ -139,13 +139,14 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
         When NOT to use: to approve/decline an existing swap (manager action, not
         exposed), or to claim an open shift (use ``deputy_claim_open_shift``).
 
+        Returns markdown (a confirmation of the submitted request) or, with
+        response_format="json", the object ``{"swap_id", "source_shift_id", "status",
+        "status_label", "note"}``.
+
         Args:
             shift_id: ``Roster.Id`` of the shift you want to give up.
             note: Optional request message.
             response_format: ``markdown`` (default) or ``json``.
-
-        Returns:
-            The created swap's id and status.
         """
         try:
             client = get_client()
@@ -200,15 +201,16 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
         When NOT to use: to request a single shift off (that is a leave request, not
         modelled here) -- this blocks availability for the whole window.
 
+        Returns markdown (a confirmation of the recorded window) or, with
+        response_format="json", the object ``{"unavailability_id", "recurring", "start",
+        "end", "timezone", "reason"}``.
+
         Args:
             start: Window start (ISO 8601).
             end: Window end (ISO 8601), after ``start``.
             reason: Optional comment.
             repeat: Optional RRULE string; see the field description.
             response_format: ``markdown`` (default) or ``json``.
-
-        Returns:
-            The created record's id and whether it is recurring.
         """
         try:
             client = get_client()
@@ -257,12 +259,13 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
         When NOT to use: to record a past shift after the fact (use a full-timesheet
         edit in Deputy) -- this starts the clock *now*.
 
+        Returns markdown (a confirmation with the timesheet id and start time; keep the
+        id to clock out) or, with response_format="json", the object ``{"timesheet_id",
+        "area_id", "in_progress", "start_time", "timezone"}``.
+
         Args:
             area_id: The area/location ``OperationalUnit.Id`` to clock into.
             response_format: ``markdown`` (default) or ``json``.
-
-        Returns:
-            The started timesheet id and start time. **Keep the id to clock out.**
         """
         try:
             client = get_client()
@@ -300,12 +303,13 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
         When NOT to use: when several timesheets are open at once -- this tool ends the
         one in-progress record and errors if the situation is ambiguous.
 
+        Returns markdown (a confirmation with the ended timesheet id, end time and total
+        hours) or, with response_format="json", the object ``{"timesheet_id",
+        "in_progress", "end_time", "timezone", "total_hours", "mealbreak_minutes"}``.
+
         Args:
             mealbreak_minutes: Optional unpaid meal-break minutes.
             response_format: ``markdown`` (default) or ``json``.
-
-        Returns:
-            The ended timesheet id, end time, and total worked hours.
         """
         try:
             client = get_client()

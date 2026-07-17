@@ -56,6 +56,9 @@ class DeputyHTTP:
     BASE_BACKOFF = 1.0
     #: Upper bound (seconds) on any single back-off wait.
     MAX_BACKOFF = 30.0
+    #: Hard cap on cached entries so a long-lived server cannot grow the cache
+    #: without bound (many distinct QUERY bodies over a session).
+    MAX_CACHE_ENTRIES = 512
 
     def __init__(self, config: DeputyConfig) -> None:
         self._config = config
@@ -200,7 +203,21 @@ class DeputyHTTP:
             return _MISS
         return value
 
+    def _sweep_expired(self) -> None:
+        """Drop every cache entry whose TTL has already elapsed."""
+        ttl = self._config.cache_ttl
+        now = time.monotonic()
+        for key in [k for k, (stored_at, _) in self._cache.items() if now - stored_at >= ttl]:
+            del self._cache[key]
+
     def _cache_set(self, key: str, value: Any) -> None:
+        # Bound memory: when at capacity and inserting a NEW key, reclaim room by
+        # first sweeping expired entries, then evicting the oldest by insertion order
+        # (dict preserves insertion order). Overwriting an existing key never grows it.
+        if key not in self._cache and len(self._cache) >= self.MAX_CACHE_ENTRIES:
+            self._sweep_expired()
+            while len(self._cache) >= self.MAX_CACHE_ENTRIES:
+                del self._cache[next(iter(self._cache))]
         self._cache[key] = (time.monotonic(), value)
 
 

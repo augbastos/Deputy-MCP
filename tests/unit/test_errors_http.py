@@ -386,6 +386,41 @@ async def test_cache_key_varies_by_params(
         await http.aclose()
 
 
+async def test_cache_is_bounded_to_max_entries(
+    make_config: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read cache never grows past MAX_CACHE_ENTRIES; the oldest keys are evicted."""
+    monkeypatch.setattr(DeputyHTTP, "MAX_CACHE_ENTRIES", 4)
+    http = DeputyHTTP(make_config(cache_ttl=1000))  # long TTL: nothing expires here
+    try:
+        for i in range(10):
+            http._cache_set(f"k{i}", i)
+        assert len(http._cache) == 4
+        assert "k0" not in http._cache  # oldest inserted, evicted first
+        assert "k9" in http._cache  # newest inserted, retained
+    finally:
+        await http.aclose()
+
+
+async def test_cache_set_sweeps_expired_before_evicting_fresh(
+    make_config: ConfigFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At capacity, expired entries are reclaimed first so a fresh insert survives."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(http_module, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
+    monkeypatch.setattr(DeputyHTTP, "MAX_CACHE_ENTRIES", 3)
+    http = DeputyHTTP(make_config(cache_ttl=10))
+    try:
+        for i in range(3):
+            http._cache_set(f"stale{i}", i)  # stored at t=1000
+        clock["t"] = 2000.0  # all three are now well past the 10s TTL
+        http._cache_set("fresh", 99)  # sweep clears the stale three, fresh stays
+        assert "fresh" in http._cache
+        assert len(http._cache) == 1
+    finally:
+        await http.aclose()
+
+
 # -- token safety + request shape --------------------------------------------
 
 

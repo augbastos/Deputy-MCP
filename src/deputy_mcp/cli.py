@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from deputy_mcp.client import DeputyClient
 from deputy_mcp.client.errors import DeputyError, DeputyNotFoundError
 from deputy_mcp.client.models import Roster, Timesheet
+from deputy_mcp.client.reads import EMPLOYEE_JOIN
 
 __all__ = ["main"]
 
@@ -153,7 +154,7 @@ def _fmt_window(shift: Roster | Timesheet) -> str:
 def _employee_name(shift: Roster | Timesheet) -> str:
     """Best-effort display name for a shift's employee (joined or by id)."""
     extra = shift.model_extra or {}
-    joined = extra.get("EmployeeObject")
+    joined = extra.get(EMPLOYEE_JOIN)
     if isinstance(joined, dict):
         for key in ("DisplayName", "Name", "FirstName"):
             value = joined.get(key)

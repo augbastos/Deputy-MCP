@@ -78,10 +78,24 @@ def test_missing_scheme_defaults_to_https() -> None:
     assert cfg.base_url == "https://cloud-nine-cafe.eu.deputy.com"
 
 
-def test_non_deputy_host_warns_but_succeeds() -> None:
-    with pytest.warns(UserWarning, match="does not look like a Deputy"):
-        cfg = DeputyConfig.from_env(_base_env(DEPUTY_BASE_URL="https://schedule.acme.example"))
+def test_non_deputy_host_fails_closed_by_default() -> None:
+    # A host outside *.deputy.com is rejected unless explicitly allowed, and the
+    # error names the escape-hatch variable for legitimate custom domains.
+    with pytest.raises(DeputyConfigError) as exc:
+        DeputyConfig.from_env(_base_env(DEPUTY_BASE_URL="https://schedule.acme.example"))
+    assert "DEPUTY_ALLOW_CUSTOM_HOST" in str(exc.value)
+
+
+def test_non_deputy_host_allowed_with_flag_warns_but_succeeds() -> None:
+    with pytest.warns(UserWarning, match="DEPUTY_ALLOW_CUSTOM_HOST"):
+        cfg = DeputyConfig.from_env(
+            _base_env(
+                DEPUTY_BASE_URL="https://schedule.acme.example",
+                DEPUTY_ALLOW_CUSTOM_HOST="true",
+            )
+        )
     assert cfg.base_url == "https://schedule.acme.example"
+    assert cfg.allow_custom_host is True
 
 
 # -- boolean / number coercion ----------------------------------------------

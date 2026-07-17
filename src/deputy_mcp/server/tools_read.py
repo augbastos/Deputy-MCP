@@ -25,6 +25,7 @@ from deputy_mcp.client import DeputyClient, DeputyError
 from deputy_mcp.server.formatting import (
     ResponseFormat,
     areas_by_id,
+    employee_display,
     render,
     render_areas,
     render_employee_list,
@@ -115,21 +116,31 @@ async def _area_map(client: DeputyClient) -> dict[int, str]:
 
 
 async def _resolve_employee_id(client: DeputyClient, ref: str | None) -> int | None:
-    """Resolve an employee reference (numeric id or name) to an id, or ``None``.
+    """Resolve an employee reference (numeric id or name) to a single id, or ``None``.
 
     A blank reference means "me" (``None`` — the caller resolves self). A numeric
-    string is used directly; otherwise the first name match wins.
+    string is used directly. A name is matched against active employees: exactly one
+    match resolves to that id; zero or several raise an actionable :class:`DeputyError`.
+    The ambiguous case lists every match with its id so the caller can retry by id,
+    instead of silently picking the first (which could act on the wrong person).
     """
     if ref is None or not ref.strip():
         return None
     text = ref.strip()
     if text.isdigit():
         return int(text)
-    matches = await client.get_employees(search=text)
-    if not matches or matches[0].Id is None:
+    # get_employees already filters to active employees; keep those with a usable id.
+    matches = [emp for emp in await client.get_employees(search=text) if emp.Id is not None]
+    if not matches:
         raise DeputyError(
             f"No employee found matching '{text}'.",
             hint="Try a numeric employee id or a different part of the name.",
+        )
+    if len(matches) > 1:
+        listing = "; ".join(f"{employee_display(emp)} (id {emp.Id})" for emp in matches)
+        raise DeputyError(
+            f"Multiple employees match '{text}': {listing}.",
+            hint="Re-run with the numeric employee id of the person you mean.",
         )
     return matches[0].Id
 
@@ -138,18 +149,21 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
     """Register all read tools onto ``mcp`` (uses ``deputy_`` name prefix)."""
     read_only = {"readOnlyHint": True, "openWorldHint": True}
 
-    @mcp.tool(
-        name="deputy_whoami",
-        annotations=read_only,
-        description=(
-            "Verify the Deputy connection and identity. Returns who the API token "
-            "authenticates as plus the company/location and its timezone. Use this "
-            "first to confirm setup before other tools."
-        ),
-    )
+    @mcp.tool(name="deputy_whoami", annotations=read_only)
     async def deputy_whoami(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """Verify the Deputy connection and confirm which identity the token uses.
+
+        Returns who the API token authenticates as, plus the company/location and its
+        timezone. Run this first to confirm setup before other tools.
+
+        When NOT to use: to read schedules or people (use deputy_get_my_roster or
+        deputy_get_employee_info) — this only checks the connection and identity.
+
+        Returns markdown (a connection summary: signed-in name, company, timezone) or,
+        with response_format="json", an object ``{"whoami", "company", "timezone"}``.
+        """
         client = get_client()
         try:
             who = await client.whoami()
@@ -163,20 +177,23 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_get_my_roster",
-        annotations=read_only,
-        description=(
-            "List the signed-in user's own upcoming shifts in a date range. "
-            "Defaults to today through the next 7 days. Dates are ISO YYYY-MM-DD. "
-            "Use deputy_get_team_roster for other people's shifts."
-        ),
-    )
+    @mcp.tool(name="deputy_get_my_roster", annotations=read_only)
     async def deputy_get_my_roster(
         start_date: Annotated[str | None, Field(description="Start date (ISO).")] = None,
         end_date: Annotated[str | None, Field(description="End date (ISO).")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """List the signed-in user's own upcoming shifts in a date range.
+
+        Defaults to today through the next 7 days, computed in UTC; dates are ISO
+        YYYY-MM-DD.
+
+        When NOT to use: for other people's shifts (use deputy_get_team_roster) or for
+        worked time (use deputy_get_my_timesheets) — this returns your scheduled shifts.
+
+        Returns markdown (a shift list, times in the install timezone) or, with
+        response_format="json", a list of Roster records.
+        """
         client = get_client()
         try:
             start = _parse_date(start_date, _today())
@@ -193,15 +210,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_get_team_roster",
-        annotations=read_only,
-        description=(
-            "List every scheduled shift in a date range, optionally scoped to one "
-            "area. Pass a single 'date' for one day, or 'start_date'/'end_date' for "
-            "a range (defaults to today -> +7 days). 'area_id' filters to an area."
-        ),
-    )
+    @mcp.tool(name="deputy_get_team_roster", annotations=read_only)
     async def deputy_get_team_roster(
         date: Annotated[str | None, Field(description="Single day (ISO); overrides range.")] = None,
         start_date: Annotated[str | None, Field(description="Range start (ISO).")] = None,
@@ -209,6 +218,18 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         area_id: Annotated[int | None, Field(description="OperationalUnit id filter.")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """List every scheduled shift in a date range, optionally scoped to one area.
+
+        Pass a single 'date' for one day, or 'start_date'/'end_date' for a range
+        (defaults to today through +7 days, computed in UTC). 'area_id' filters to one
+        operational unit.
+
+        When NOT to use: to see who is actually clocked in right now (use
+        deputy_who_is_working) — this lists the schedule, not live attendance.
+
+        Returns markdown (a shift list, times in the install timezone) or, with
+        response_format="json", a list of Roster records.
+        """
         client = get_client()
         try:
             if date is not None and date.strip():
@@ -228,19 +249,24 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_who_is_working",
-        annotations=read_only,
-        description=(
-            "Show who is working now (or at a given instant): both who is physically "
-            "clocked in (actual timesheets) and who is scheduled to be on (roster "
-            "window). 'at' is an optional ISO datetime; defaults to now."
-        ),
-    )
+    @mcp.tool(name="deputy_who_is_working", annotations=read_only)
     async def deputy_who_is_working(
         at: Annotated[str | None, Field(description="Instant to evaluate (ISO datetime).")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """Show who is working at an instant: physically clocked in vs scheduled on.
+
+        Reconciles two signals — who is clocked in (actual timesheets) and who is
+        rostered on (schedule window). 'at' is an optional ISO datetime; it defaults to
+        now (UTC).
+
+        When NOT to use: for a whole day's or week's schedule (use
+        deputy_get_team_roster) — this is a single-instant snapshot.
+
+        Returns markdown (two lists: on the clock, and rostered now) or, with
+        response_format="json", an object ``{"at", "clocked_in": [Timesheet],
+        "rostered_now": [Roster]}``.
+        """
         client = get_client()
         try:
             moment = _parse_dt(at)
@@ -255,19 +281,24 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_get_employee_info",
-        annotations=read_only,
-        description=(
-            "Look up one or more employees by name (substring) or numeric id. "
-            "Returns their documented profile fields (status, location, role id). "
-            "Use deputy_get_areas to translate location/area ids into names."
-        ),
-    )
+    @mcp.tool(name="deputy_get_employee_info", annotations=read_only)
     async def deputy_get_employee_info(
         name_or_id: Annotated[str, Field(description="Employee name (substring) or numeric id.")],
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """Look up one or more employees by name (substring) or numeric id.
+
+        Returns each match's documented profile fields (status, location, role id). A
+        name may match several people; every match is listed with its id so you can
+        follow up by id.
+
+        When NOT to use: to find someone's shifts (use deputy_search_shifts or
+        deputy_next_shift) — this returns profiles, not schedules. Use deputy_get_areas
+        to translate location/area ids into names.
+
+        Returns markdown (an employee list with ids) or, with response_format="json", a
+        list of Employee records.
+        """
         client = get_client()
         try:
             ref = name_or_id.strip()
@@ -285,15 +316,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_search_shifts",
-        annotations=read_only,
-        description=(
-            "Search shifts by any combination of employee (name or id), area, date "
-            "range, and open/unassigned status. 'open_only' finds shifts nobody is "
-            "assigned to yet. Use 'limit'/'offset' to page (max 500 per page)."
-        ),
-    )
+    @mcp.tool(name="deputy_search_shifts", annotations=read_only)
     async def deputy_search_shifts(
         employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
         area_id: Annotated[int | None, Field(description="OperationalUnit id filter.")] = None,
@@ -304,6 +327,19 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         offset: Annotated[int, Field(ge=0, description="Records to skip (pagination).")] = 0,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """Search shifts by employee (name or id), area, date range, and open status.
+
+        'open_only' finds shifts nobody is assigned to yet. 'limit'/'offset' page the
+        results (max 500 per page). A name given as 'employee' must resolve to exactly
+        one active person; otherwise the matches are listed for you to retry by id.
+
+        When NOT to use: for just your own upcoming shifts (use deputy_get_my_roster) or
+        only the single next one (use deputy_next_shift).
+
+        Returns markdown (a shift list plus a paging hint) or, with
+        response_format="json", an object ``{"shifts": [Roster], "pagination": {limit,
+        offset, returned, has_more, next_offset}}``.
+        """
         client = get_client()
         try:
             employee_id = None if open_only else await _resolve_employee_id(client, employee)
@@ -349,17 +385,19 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_get_areas",
-        annotations=read_only,
-        description=(
-            "List all areas (operational units / work locations) with their ids. "
-            "Use the ids to filter deputy_get_team_roster or deputy_search_shifts."
-        ),
-    )
+    @mcp.tool(name="deputy_get_areas", annotations=read_only)
     async def deputy_get_areas(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """List all areas (operational units / work locations) with their ids.
+
+        Use the ids to filter deputy_get_team_roster or deputy_search_shifts.
+
+        When NOT to use: to list shifts or people — this only enumerates locations.
+
+        Returns markdown (an area list with ids) or, with response_format="json", a
+        list of OperationalUnit records.
+        """
         client = get_client()
         try:
             units = await client.get_operational_units()
@@ -367,18 +405,22 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_next_shift",
-        annotations=read_only,
-        description=(
-            "Return the single next upcoming shift for an employee (name or id). "
-            "Omit 'employee' to get your own next shift."
-        ),
-    )
+    @mcp.tool(name="deputy_next_shift", annotations=read_only)
     async def deputy_next_shift(
         employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """Return the single next upcoming shift for an employee (name or id).
+
+        Omit 'employee' to get your own next shift. A name must resolve to exactly one
+        active person; otherwise the matches are listed for you to retry by id.
+
+        When NOT to use: for a full range of upcoming shifts (use deputy_get_my_roster
+        or deputy_search_shifts) — this returns only the earliest one.
+
+        Returns markdown (one shift, or a 'none scheduled' note) or, with
+        response_format="json", a single Roster record or null.
+        """
         client = get_client()
         try:
             employee_id = await _resolve_employee_id(client, employee)
@@ -393,23 +435,26 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         except DeputyError as exc:
             return _error(exc)
 
-    @mcp.tool(
-        name="deputy_get_my_timesheets",
-        annotations=read_only,
-        description=(
-            "List the signed-in user's own timesheets (actual worked time) in a "
-            "date range. Defaults to the last 7 days through today. Shows total "
-            "hours worked and flags any timesheet still in progress."
-        ),
-    )
+    @mcp.tool(name="deputy_get_my_timesheets", annotations=read_only)
     async def deputy_get_my_timesheets(
         start_date: Annotated[str | None, Field(description="Start date (ISO).")] = None,
         end_date: Annotated[str | None, Field(description="End date (ISO).")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
+        """List the signed-in user's own timesheets (actual worked time) in a range.
+
+        Defaults to the last 7 days through today, computed in UTC. Shows total hours
+        worked and flags any timesheet still in progress.
+
+        When NOT to use: for scheduled (not yet worked) time (use deputy_get_my_roster)
+        — timesheets record actual attendance, not the plan.
+
+        Returns markdown (a timesheet list with a worked-hours total) or, with
+        response_format="json", a list of Timesheet records.
+        """
         client = get_client()
         try:
-            end = _parse_date(end_date, date.today())
+            end = _parse_date(end_date, _today())
             start = _parse_date(start_date, end - timedelta(days=7))
             timesheets = await client.get_my_timesheets(start, end)
             tz, label = await resolve_client_timezone(client)

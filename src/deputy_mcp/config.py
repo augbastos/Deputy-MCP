@@ -15,7 +15,15 @@ import warnings
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 from deputy_mcp.client.errors import DeputyConfigError
 
@@ -50,6 +58,9 @@ class DeputyConfig(BaseModel):
 
     Attributes:
         api_token: Permanent token or OAuth access token (redacted in output).
+        allow_custom_host: Allow a ``base_url`` host outside ``*.deputy.com`` (opt-in
+            escape hatch for enterprise custom domains). Off by default: an unknown
+            host fails closed rather than silently talking to an unintended server.
         base_url: Normalized install origin, e.g. ``https://acme.eu.deputy.com``.
         allow_writes: Whether write operations are permitted (opt-in).
         cache_ttl: Read-cache lifetime in seconds; ``0`` disables caching.
@@ -60,6 +71,9 @@ class DeputyConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     api_token: SecretStr
+    # Declared before ``base_url`` so the base-URL validator can read it via
+    # ``info.data`` to decide whether a non-deputy.com host is allowed.
+    allow_custom_host: bool = False
     base_url: str
     allow_writes: bool = False
     cache_ttl: int = Field(default=30, ge=0)
@@ -68,14 +82,25 @@ class DeputyConfig(BaseModel):
 
     @field_validator("base_url")
     @classmethod
-    def _validate_base_url(cls, value: str) -> str:
+    def _validate_base_url(cls, value: str, info: ValidationInfo) -> str:
         normalized = _normalize_base_url(value)
         host = urlparse(normalized).hostname or ""
         if not host.endswith(".deputy.com"):
+            # Fail closed on an unexpected host: a typo or wrong value could point the
+            # token at an unintended server. Legitimate enterprise custom domains opt
+            # back in via DEPUTY_ALLOW_CUSTOM_HOST, which downgrades this to a warning.
+            if not info.data.get("allow_custom_host", False):
+                raise ValueError(
+                    f"DEPUTY_BASE_URL host '{host}' is not a Deputy install "
+                    "('{install}.{geo}.deputy.com'). If this is a legitimate "
+                    "enterprise custom domain, set DEPUTY_ALLOW_CUSTOM_HOST=true to "
+                    "allow it; otherwise correct DEPUTY_BASE_URL to the address you "
+                    "see when logged in to Deputy."
+                )
             warnings.warn(
-                f"DEPUTY_BASE_URL host '{host}' does not look like a Deputy "
-                "install ('{install}.{geo}.deputy.com'). Proceeding anyway for "
-                "custom or enterprise domains.",
+                f"DEPUTY_BASE_URL host '{host}' does not look like a Deputy install "
+                "('{install}.{geo}.deputy.com'); allowed because "
+                "DEPUTY_ALLOW_CUSTOM_HOST is set.",
                 stacklevel=2,
             )
         return normalized
@@ -125,6 +150,7 @@ class DeputyConfig(BaseModel):
             )
 
         allow_writes = (env.get("DEPUTY_ALLOW_WRITES") or "").strip().lower() in _TRUTHY
+        allow_custom_host = (env.get("DEPUTY_ALLOW_CUSTOM_HOST") or "").strip().lower() in _TRUTHY
         cache_ttl = _parse_int(env, "DEPUTY_CACHE_TTL", 30)
         timeout = _parse_float(env, "DEPUTY_TIMEOUT", 30.0)
         max_retries = _parse_int(env, "DEPUTY_MAX_RETRIES", 3)
@@ -132,6 +158,7 @@ class DeputyConfig(BaseModel):
         try:
             return cls(
                 api_token=SecretStr(token),
+                allow_custom_host=allow_custom_host,
                 base_url=base_url,
                 allow_writes=allow_writes,
                 cache_ttl=cache_ttl,

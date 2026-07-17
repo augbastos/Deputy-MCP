@@ -154,6 +154,65 @@ async def test_read_tool_renders_markdown(
     assert not result.is_error
 
 
+async def test_search_shifts_ambiguous_employee_lists_matches(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_employee: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """A name that matches several people asks to retry by id instead of guessing."""
+    _wire(
+        deputy_api,
+        make_whoami,
+        make_company,
+        make_employee,
+        make_operational_unit,
+        make_roster,
+        make_timesheet,
+        sample_employees,  # Employee/QUERY returns three people
+    )
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("deputy_search_shifts", {"employee": "a"})
+    text = tool_text(result)
+    # The tool caught the ambiguity and returned actionable prose (not an error result).
+    assert not result.is_error
+    assert "Multiple employees match" in text
+    assert "id 101" in text
+    assert "id 102" in text
+
+
+async def test_next_shift_single_employee_match_resolves(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_employee: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+) -> None:
+    """Exactly one active match resolves to that id and the lookup proceeds normally."""
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(),
+        company=make_company(),
+        employees=[make_employee()],  # a single, unambiguous match
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+    )
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("deputy_next_shift", {"employee": "Alex"})
+    text = tool_text(result)
+    assert not result.is_error
+    assert "Next shift" in text
+
+
 async def test_get_employee_info_by_numeric_id(
     deputy_api: respx.MockRouter,
     make_whoami: PayloadFactory,

@@ -34,10 +34,15 @@ from deputy_mcp.client.models import (
 )
 from deputy_mcp.client.query import QueryBuilder, query_all
 
-__all__ = ["ReadsMixin"]
+__all__ = ["EMPLOYEE_JOIN", "ReadsMixin"]
 
-#: Association name to eager-load the assigned employee onto a Roster/Timesheet.
-_EMPLOYEE_JOIN = "EmployeeObject"
+#: Association name used to eager-load the assigned employee onto a Roster/Timesheet
+#: (both the QUERY ``join`` sent here and the key the response is read back under, in
+#: :mod:`deputy_mcp.server.formatting` and :mod:`deputy_mcp.cli`). "EmployeeObject" is
+#: the documented example name but the join/assoc naming is a smoke-test gap in the API
+#: notes (deputy-api-read.md §1.1) and MUST be confirmed against a live install; keeping
+#: it in one place means a correction propagates to every send/parse site at once.
+EMPLOYEE_JOIN = "EmployeeObject"
 
 #: WhoAmI keys, in priority order, that may carry the caller's Employee.Id.
 _WHOAMI_EMPLOYEE_KEYS = ("EmployeeId", "Employee", "employeeId", "EmployeeID")
@@ -132,7 +137,7 @@ class ReadsMixin:
             .where("Employee", "eq", employee_id)
             .where("Date", "ge", start.isoformat())
             .where("Date", "le", end.isoformat())
-            .join(_EMPLOYEE_JOIN)
+            .join(EMPLOYEE_JOIN)
             .sort("StartTime")
         )
         records = await query_all(self._http, "Roster", builder)
@@ -153,7 +158,7 @@ class ReadsMixin:
         )
         if opunit_id is not None:
             builder.where("OperationalUnit", "eq", opunit_id)
-        builder.join(_EMPLOYEE_JOIN).sort("StartTime")
+        builder.join(EMPLOYEE_JOIN).sort("StartTime")
         records = await query_all(self._http, "Roster", builder)
         return _as_models(records, Roster)
 
@@ -185,7 +190,7 @@ class ReadsMixin:
             QueryBuilder()
             .where("IsInProgress", "eq", True)
             .where("StartTime", "le", now)
-            .join(_EMPLOYEE_JOIN)
+            .join(EMPLOYEE_JOIN)
         )
         clocked_records = await query_all(self._http, "Timesheet", clocked_builder)
 
@@ -197,7 +202,7 @@ class ReadsMixin:
             .where("EndTime", "gt", now)
             .where("Published", "eq", True)
             .where("Open", "ne", True)
-            .join(_EMPLOYEE_JOIN)
+            .join(EMPLOYEE_JOIN)
         )
         rostered_records = await query_all(self._http, "Roster", rostered_builder)
 
@@ -265,7 +270,7 @@ class ReadsMixin:
             builder.where("Date", "ge", start.isoformat())
         if end is not None:
             builder.where("Date", "le", end.isoformat())
-        builder.join(_EMPLOYEE_JOIN).sort("StartTime")
+        builder.join(EMPLOYEE_JOIN).sort("StartTime")
         builder.max(page_size).start(max(0, offset))
         records = await query_all(self._http, "Roster", builder, hard_limit=page_size)
         return _as_models(records, Roster)
@@ -281,7 +286,7 @@ class ReadsMixin:
             QueryBuilder()
             .where("StartTime", "gt", _now_unix(None))
             .where("Employee", "eq", target)
-            .join(_EMPLOYEE_JOIN)
+            .join(EMPLOYEE_JOIN)
             .sort("StartTime")
             .max(1)
         )
@@ -304,7 +309,7 @@ class ReadsMixin:
             .where("Employee", "eq", employee_id)
             .where("Date", "ge", start.isoformat())
             .where("Date", "le", end.isoformat())
-            .join(_EMPLOYEE_JOIN)
+            .join(EMPLOYEE_JOIN)
             .sort("StartTime")
         )
         records = await query_all(self._http, "Timesheet", builder)
