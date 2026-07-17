@@ -14,6 +14,7 @@ import os
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 from dotenv import dotenv_values
@@ -25,6 +26,7 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from deputy_mcp.client.errors import DeputyConfigError
@@ -58,13 +60,30 @@ def _normalize_base_url(raw: str) -> str:
 class DeputyConfig(BaseModel):
     """Validated runtime configuration.
 
+    Two mutually-supportive credentials decide the operating :attr:`mode`:
+
+    * ``api_token`` (+ ``base_url``) → **api** mode: the full authenticated client, every
+      tool. Behaviour identical to before iCal mode existed.
+    * ``calendar_url`` only → **ical** mode: the caller has no API token (an ordinary
+      employee cannot mint one) but supplies their personal Deputy iCal feed, which needs
+      no token and exposes only their own roster. ``base_url`` is not required here.
+
+    At least one of the two must be present; :meth:`from_env` (and the after-validator)
+    fail closed naming both paths when neither is.
+
     Attributes:
-        api_token: Permanent token or OAuth access token (redacted in output).
+        api_token: Permanent token or OAuth access token (redacted in output). ``None`` in
+            iCal mode.
         allow_custom_host: Allow a ``base_url`` host outside ``*.deputy.com`` (opt-in
             escape hatch for enterprise custom domains). Off by default: an unknown
             host fails closed rather than silently talking to an unintended server.
-        base_url: Normalized install origin, e.g. ``https://acme.eu.deputy.com``.
-        allow_writes: Whether write operations are permitted (opt-in).
+        base_url: Normalized install origin, e.g. ``https://acme.eu.deputy.com``. ``None``
+            in iCal mode (the feed URL is self-contained).
+        calendar_url: Personal Deputy iCal feed URL (the ``CalendarURL`` field of
+            ``GET /api/v1/me``). It carries its own feed token, so it is a SECRET, stored
+            as :class:`~pydantic.SecretStr` and never logged. ``None`` in api mode.
+        allow_writes: Whether write operations are permitted (opt-in). Ignored in iCal
+            mode, which is read-only by construction.
         cache_ttl: Read-cache lifetime in seconds; ``0`` disables caching.
         timeout: Per-request timeout in seconds.
         max_retries: Maximum retries for throttling/transient transport errors.
@@ -72,11 +91,12 @@ class DeputyConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    api_token: SecretStr
+    api_token: SecretStr | None = None
     # Declared before ``base_url`` so the base-URL validator can read it via
     # ``info.data`` to decide whether a non-deputy.com host is allowed.
     allow_custom_host: bool = False
-    base_url: str
+    base_url: str | None = None
+    calendar_url: SecretStr | None = None
     allow_writes: bool = False
     cache_ttl: int = Field(default=30, ge=0)
     timeout: float = Field(default=30.0, gt=0)
@@ -84,7 +104,9 @@ class DeputyConfig(BaseModel):
 
     @field_validator("base_url")
     @classmethod
-    def _validate_base_url(cls, value: str, info: ValidationInfo) -> str:
+    def _validate_base_url(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None:
+            return None
         normalized = _normalize_base_url(value)
         host = urlparse(normalized).hostname or ""
         if not host.endswith(".deputy.com"):
@@ -107,14 +129,68 @@ class DeputyConfig(BaseModel):
             )
         return normalized
 
+    @model_validator(mode="after")
+    def _require_a_credential(self) -> DeputyConfig:
+        """Fail closed unless a usable credential set is present (defence in depth).
+
+        :meth:`from_env` already gives friendlier messages, but constructing the model
+        directly must never yield an unusable config: at least one of ``api_token`` or
+        ``calendar_url`` is required, and api mode additionally needs ``base_url``.
+        """
+        if self.api_token is None and self.calendar_url is None:
+            raise ValueError(
+                "no Deputy credentials: set DEPUTY_API_TOKEN (api mode) or "
+                "DEPUTY_CALENDAR_URL (iCal mode)"
+            )
+        if self.api_token is not None and self.base_url is None:
+            raise ValueError("DEPUTY_BASE_URL is required when DEPUTY_API_TOKEN is set (api mode)")
+        return self
+
+    @property
+    def mode(self) -> Literal["api", "ical"]:
+        """The resolved operating mode.
+
+        ``api`` whenever an API token is present (it is primary even if a calendar URL is
+        also set, so the full tool surface stays available); otherwise ``ical``. An
+        after-validator guarantees at least one credential exists, so these two are
+        exhaustive.
+        """
+        return "api" if self.api_token is not None else "ical"
+
     @property
     def api_url(self) -> str:
-        """The versioned API base used by the HTTP transport."""
+        """The versioned API base used by the HTTP transport (api mode only)."""
+        if self.base_url is None:
+            raise DeputyConfigError(
+                "No DEPUTY_BASE_URL is configured (this client is in iCal mode).",
+                hint="Set DEPUTY_API_TOKEN and DEPUTY_BASE_URL to use the full Deputy API.",
+            )
         return f"{self.base_url}/api/v1"
 
     def token(self) -> str:
-        """Return the raw token value. Never log or print the result."""
+        """Return the raw token value (api mode). Never log or print the result."""
+        if self.api_token is None:
+            raise DeputyConfigError(
+                "No DEPUTY_API_TOKEN is configured (this client is in iCal mode).",
+                hint="Set DEPUTY_API_TOKEN and DEPUTY_BASE_URL to use the full Deputy API.",
+            )
         return self.api_token.get_secret_value()
+
+    def calendar_url_value(self) -> str:
+        """Return the raw iCal feed URL (iCal mode). Never log or print the result.
+
+        The value carries a feed token, so it is treated exactly like the API token:
+        referenced by accessor, never rendered into logs, errors or output.
+        """
+        if self.calendar_url is None:
+            raise DeputyConfigError(
+                "No DEPUTY_CALENDAR_URL is configured.",
+                hint=(
+                    "Copy your personal calendar link from Deputy (My Schedule -> "
+                    "subscribe/export calendar) and set it as DEPUTY_CALENDAR_URL."
+                ),
+            )
+        return self.calendar_url.get_secret_value()
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> DeputyConfig:
@@ -135,18 +211,27 @@ class DeputyConfig(BaseModel):
         env = _with_env_file(env, allow_cwd_default=environ is None)
 
         token = (env.get("DEPUTY_API_TOKEN") or "").strip()
-        if not token:
+        calendar_url = (env.get("DEPUTY_CALENDAR_URL") or "").strip()
+
+        # Fail closed naming BOTH legitimate paths: either an API token (full client) or a
+        # personal iCal feed URL (roster-only, no token needed). An ordinary employee who
+        # cannot mint a token still has a valid path via DEPUTY_CALENDAR_URL.
+        if not token and not calendar_url:
             raise DeputyConfigError(
-                "DEPUTY_API_TOKEN is not set.",
+                "No Deputy credentials found: set DEPUTY_API_TOKEN or DEPUTY_CALENDAR_URL.",
                 hint=(
-                    "Create a permanent token in Deputy under Business settings "
-                    "-> Integrations -> API access (New OAuth Client -> Get an "
-                    "Access Token; shown once), then set it as DEPUTY_API_TOKEN."
+                    "Full access (all tools): create a token in Deputy under Business "
+                    "settings -> Integrations -> API access (New OAuth Client -> Get an "
+                    "Access Token; shown once) and set DEPUTY_API_TOKEN plus DEPUTY_BASE_URL. "
+                    "No API token (ordinary employee)? Open Deputy -> My Schedule -> "
+                    "subscribe/export calendar, copy the iCal link and set it as "
+                    "DEPUTY_CALENDAR_URL for roster-only, read-only access."
                 ),
             )
 
         base_url = (env.get("DEPUTY_BASE_URL") or "").strip()
-        if not base_url:
+        # base_url is required only in api mode; iCal mode's feed URL is self-contained.
+        if token and not base_url:
             raise DeputyConfigError(
                 "DEPUTY_BASE_URL is not set.",
                 hint=(
@@ -164,9 +249,10 @@ class DeputyConfig(BaseModel):
 
         try:
             return cls(
-                api_token=SecretStr(token),
+                api_token=SecretStr(token) if token else None,
                 allow_custom_host=allow_custom_host,
-                base_url=base_url,
+                base_url=base_url or None,
+                calendar_url=SecretStr(calendar_url) if calendar_url else None,
                 allow_writes=allow_writes,
                 cache_ttl=cache_ttl,
                 timeout=timeout,

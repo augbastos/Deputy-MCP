@@ -141,6 +141,28 @@ class DeputyWritesDisabledError(DeputyError):
         super().__init__(message, hint=hint, status_code=status_code)
 
 
+class DeputyFeedError(DeputyError):
+    """The iCal roster feed (``DEPUTY_CALENDAR_URL``) could not be fetched.
+
+    Raised in iCal mode when the personal calendar feed cannot be retrieved (network
+    failure, or an HTTP error from Deputy). The feed URL carries a token and is NEVER
+    included in the message, hint, or body.
+    """
+
+    def __init__(
+        self,
+        message: str = "Could not read your Deputy iCal roster feed.",
+        *,
+        hint: str | None = (
+            "Check DEPUTY_CALENDAR_URL is your current Deputy calendar link "
+            "(Deputy -> My Schedule -> subscribe/export calendar). If you regenerated "
+            "the link, copy the new one; the old feed URL stops working."
+        ),
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, hint=hint, status_code=status_code)
+
+
 class DeputyAPIError(DeputyError):
     """Any other 4xx/5xx response.
 
@@ -180,6 +202,7 @@ __all__ = [
     "DeputyAuthError",
     "DeputyConfigError",
     "DeputyError",
+    "DeputyFeedError",
     "DeputyNotFoundError",
     "DeputyPermissionError",
     "DeputyRateLimitError",

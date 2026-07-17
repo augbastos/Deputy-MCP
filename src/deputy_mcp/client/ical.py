@@ -14,10 +14,20 @@ caller; the URL is never logged.
 
 from __future__ import annotations
 
+import asyncio
+import random
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 
-__all__ = ["RosterEvent", "parse_ical"]
+import httpx
+
+from deputy_mcp.client.errors import DeputyFeedError
+
+__all__ = ["IcalRosterSource", "RosterEvent", "parse_ical"]
+
+#: HTTP statuses that are safe to retry when fetching the feed (throttling + transient).
+_RETRY_STATUSES = frozenset({429, 502, 503, 504})
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,3 +189,152 @@ def _build_event(props: dict[str, tuple[str, dict[str, str]]]) -> RosterEvent | 
     return RosterEvent(
         start=start, end=end, title=title, location=location or None, uid=uid, all_day=all_day
     )
+
+
+class IcalRosterSource:
+    """Fetch and window-filter an employee's roster from their Deputy iCal feed.
+
+    Wraps a single :class:`httpx.AsyncClient` GET of the ``CalendarURL`` feed. The URL is
+    an opaque SECRET (it carries its own feed token): it is only ever passed to httpx and
+    is never logged, put in an exception, or included in a cache key. Fetches share the
+    same defensive retry/back-off philosophy as :class:`~deputy_mcp.client.http.DeputyHTTP`
+    (full-jitter exponential back-off, honouring ``Retry-After``) and a short in-memory TTL
+    cache, since the feed changes only when the roster does.
+
+    This is the read source for iCal mode: it exposes only the caller's own roster, with no
+    token and no write path.
+    """
+
+    #: Base back-off in seconds for the first retry (full-jitter window).
+    BASE_BACKOFF = 1.0
+    #: Upper bound (seconds) on any single back-off wait.
+    MAX_BACKOFF = 30.0
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        timeout: float = 30.0,
+        max_retries: int = 3,
+        cache_ttl: int = 30,
+    ) -> None:
+        """Build a feed source.
+
+        Args:
+            url: The personal iCal feed URL (a secret; never logged).
+            timeout: Per-request timeout in seconds.
+            max_retries: Maximum retries on throttling/transient transport failures.
+            cache_ttl: Parsed-feed cache lifetime in seconds; ``0`` disables caching.
+        """
+        # Held only to pass to httpx; deliberately not exposed via any property or repr.
+        self._url = url
+        self._max_retries = max_retries
+        self._cache_ttl = cache_ttl
+        self._client = httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            headers={
+                "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
+                "User-Agent": "deputy-mcp",
+            },
+        )
+        self._cache: tuple[float, list[RosterEvent]] | None = None
+
+    def __repr__(self) -> str:
+        """Redacted repr — the feed URL is a secret and must never leak."""
+        return "IcalRosterSource(url=<redacted>)"
+
+    async def get_roster(self, start: date, end: date) -> list[RosterEvent]:
+        """Return the caller's shifts whose local day falls within ``[start, end]``.
+
+        The feed carries the whole subscription window with no server-side range filter,
+        so the window is applied client-side via :attr:`RosterEvent.day`. Results stay in
+        start-time order (the parser already sorts them).
+        """
+        return [event for event in await self._events() if start <= event.day <= end]
+
+    async def next(self, after: datetime | None = None) -> RosterEvent | None:
+        """Return the earliest shift starting strictly after ``after`` (default: now).
+
+        Events are pre-sorted by start, so the first future one is the answer. Returns
+        ``None`` when the feed has no upcoming shift.
+        """
+        moment = after if after is not None else datetime.now(UTC)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        for event in await self._events():
+            if event.start > moment:
+                return event
+        return None
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()
+
+    # -- internal -----------------------------------------------------------
+
+    async def _events(self) -> list[RosterEvent]:
+        """Return the parsed feed, served from the TTL cache when still fresh."""
+        if self._cache_ttl > 0 and self._cache is not None:
+            stored_at, cached = self._cache
+            if time.monotonic() - stored_at < self._cache_ttl:
+                return cached
+        events = parse_ical(await self._fetch())
+        if self._cache_ttl > 0:
+            self._cache = (time.monotonic(), events)
+        return events
+
+    async def _fetch(self) -> str:
+        """GET the feed body with retry/back-off, raising :class:`DeputyFeedError`.
+
+        A GET is idempotent, so it is always safe to replay. Neither the URL nor the
+        response body is placed in the raised error (the body could echo the tokenised
+        URL); only an actionable, secret-free hint is surfaced.
+        """
+        attempt = 0
+        while True:
+            try:
+                response = await self._client.get(self._url)
+            except httpx.TransportError as exc:
+                if attempt < self._max_retries:
+                    await self._sleep(self._backoff_delay(attempt, None))
+                    attempt += 1
+                    continue
+                # str(exc) can contain the request URL; do not include it.
+                raise DeputyFeedError(
+                    "Network error while reading your Deputy iCal roster feed."
+                ) from exc
+
+            status = response.status_code
+            if status < 400:
+                return response.text
+            if status in _RETRY_STATUSES and attempt < self._max_retries:
+                await self._sleep(self._backoff_delay(attempt, _retry_after(response)))
+                attempt += 1
+                continue
+            raise DeputyFeedError(
+                f"Your Deputy iCal roster feed returned HTTP {status}.",
+                status_code=status,
+            )
+
+    async def _sleep(self, delay: float) -> None:
+        """Sleep for ``delay`` seconds (separated for test seams)."""
+        await asyncio.sleep(delay)
+
+    def _backoff_delay(self, attempt: int, retry_after: float | None) -> float:
+        """Full-jitter exponential back-off, honouring a server ``Retry-After`` (capped)."""
+        if retry_after is not None:
+            return min(max(retry_after, 0.0), self.MAX_BACKOFF)
+        cap = min(self.MAX_BACKOFF, self.BASE_BACKOFF * (2**attempt))
+        return random.uniform(0.0, cap)
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """Read a ``Retry-After`` header as seconds, ignoring the HTTP-date form."""
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return None
