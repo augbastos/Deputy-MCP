@@ -61,10 +61,44 @@ _DEPUTY_VARS: tuple[str, ...] = (
     "DEPUTY_API_TOKEN",
     "DEPUTY_BASE_URL",
     "DEPUTY_ALLOW_WRITES",
+    "DEPUTY_ALLOW_CUSTOM_HOST",
+    "DEPUTY_CALENDAR_URL",
+    "DEPUTY_OAUTH_CLIENT_ID",
+    "DEPUTY_OAUTH_CLIENT_SECRET",
+    "DEPUTY_OAUTH_REDIRECT_PORT",
     "DEPUTY_CACHE_TTL",
     "DEPUTY_TIMEOUT",
     "DEPUTY_MAX_RETRIES",
 )
+
+#: Env-file / token-store pointers. The autouse isolation fixture pins these at hermetic
+#: temp paths and, unlike the credential vars above, they are NOT cleared by the per-test
+#: env fixtures — so an ambient repo ``.env`` or a real ``~/.deputy-mcp`` never leaks in.
+_ISOLATION_VARS: tuple[str, ...] = ("DEPUTY_ENV_FILE", "DEPUTY_TOKEN_STORE")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_environment(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Make every (non-live) test hermetic against the real environment.
+
+    Without this, a developer who has run ``deputy-mcp login`` (a real token store at
+    ``~/.deputy-mcp/token.json``) or who keeps a ``.env`` in the repo — the documented
+    setup — would see the suite resolve a real OAuth/api config instead of the test's
+    intended one. This clears every ``DEPUTY_*`` variable, points the token store at an
+    isolated temp path, and neutralises any ambient ``.env`` by pointing
+    ``DEPUTY_ENV_FILE`` at an empty file. Tests marked ``live`` opt out — they are meant
+    to read the real credentials.
+    """
+    if request.node.get_closest_marker("live") is not None:
+        return
+    for name in (*_DEPUTY_VARS, *_ISOLATION_VARS):
+        monkeypatch.delenv(name, raising=False)
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("DEPUTY_ENV_FILE", str(empty_env))
+    monkeypatch.setenv("DEPUTY_TOKEN_STORE", str(tmp_path / "token.json"))
 
 
 # -- constant fixtures (import-free access for other test modules) -----------

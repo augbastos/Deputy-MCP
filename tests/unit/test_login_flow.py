@@ -27,7 +27,7 @@ import respx
 from deputy_mcp import oauth
 from deputy_mcp.client.errors import DeputyAuthError, DeputyConfigError
 from deputy_mcp.config import DeputyConfig
-from deputy_mcp.oauth import TOKEN_URL, OAuthTokens, TokenStore, run_login_flow
+from deputy_mcp.oauth import TOKEN_URL, TokenStore, run_login_flow
 
 _INSTALL_ORIGIN = "https://acme.eu.deputy.com"
 _CLIENT_ID = "fake-oauth-client-id"
@@ -130,11 +130,13 @@ async def test_run_login_flow_times_out_cleanly(
 
 
 async def test_run_login_flow_requires_client_credentials(tmp_path: Path) -> None:
-    # A config with a stored token but no client id/secret cannot start a fresh login.
-    store_path = tmp_path / "token.json"
-    TokenStore(store_path).save(
-        OAuthTokens("a", "r", expires_at=1_900_000_000.0, base_url=_INSTALL_ORIGIN)
+    # run_login_flow needs client id + secret to start a fresh sign-in. A config that has
+    # a valid auth path but no OAuth creds (here iCal mode) is rejected with a clear error.
+    config = DeputyConfig.from_env(
+        {
+            "DEPUTY_CALENDAR_URL": "https://demo.eu.deputy.com/calendar?ap=fake",
+            "DEPUTY_TOKEN_STORE": str(tmp_path / "token.json"),
+        }
     )
-    config = DeputyConfig.from_env({"DEPUTY_TOKEN_STORE": str(store_path)})
     with pytest.raises(DeputyConfigError):
         await run_login_flow(config)

@@ -69,7 +69,7 @@ def test_login_success_persists_tokens_without_printing_a_token(
     monkeypatch.setenv("DEPUTY_OAUTH_CLIENT_SECRET", _CLIENT_SECRET)
     monkeypatch.setenv("DEPUTY_TOKEN_STORE", str(store_path))
 
-    async def _fake_flow(_config: object) -> OAuthTokens:
+    async def _fake_flow(_config: object, *, open_browser: bool = True) -> OAuthTokens:
         return OAuthTokens(
             access_token=_ACCESS_TOKEN,
             refresh_token="fake-refresh-token-value",

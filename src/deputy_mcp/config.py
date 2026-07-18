@@ -10,7 +10,6 @@ never be accidentally logged.
 
 from __future__ import annotations
 
-import json
 import os
 import warnings
 from collections.abc import Mapping
@@ -66,24 +65,6 @@ _DEFAULT_REDIRECT_PORT = 8823
 def _default_token_store_path() -> Path:
     """Default location for the OAuth token store (``~/.deputy-mcp/token.json``)."""
     return Path.home() / ".deputy-mcp" / "token.json"
-
-
-def _token_store_has_refresh(path: Path) -> bool:
-    """Return whether ``path`` holds a usable OAuth token store (has a refresh token).
-
-    Reads the JSON file directly (never importing the oauth module, to avoid a
-    circular import) and never logs or returns any value from it. Any error —
-    missing file, bad JSON, wrong shape — is swallowed to ``False`` so a broken
-    store simply means "not logged in" rather than a config crash.
-    """
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    refresh = data.get("refresh_token")
-    return isinstance(refresh, str) and bool(refresh)
 
 
 class DeputyConfig(BaseModel):
@@ -182,15 +163,16 @@ class DeputyConfig(BaseModel):
         return self
 
     def _oauth_available(self) -> bool:
-        """Whether the OAuth path is usable: creds to run ``login`` or a stored token.
+        """Whether the OAuth path is usable: both client credentials are present.
 
-        True when both OAuth client credentials are present (so ``deputy-mcp login``
-        can run) OR a token store with a refresh token already exists. Reads the store
-        file but never its secret values (see :func:`_token_store_has_refresh`).
+        OAuth mode is keyed on the CLIENT CREDENTIALS, not on whether a token store
+        happens to exist on disk. Refreshing an access token requires the client id and
+        secret, so a bare token store without credentials could not stay signed in — and
+        keying on a filesystem file would make config resolution non-deterministic. With
+        credentials present, ``deputy-mcp login`` can mint (or the client can refresh) the
+        stored token.
         """
-        if self.oauth_client_id and self.oauth_client_secret is not None:
-            return True
-        return _token_store_has_refresh(self.token_store_path)
+        return bool(self.oauth_client_id and self.oauth_client_secret is not None)
 
     @property
     def auth_kind(self) -> Literal["static", "oauth", "ical"]:
@@ -296,10 +278,9 @@ class DeputyConfig(BaseModel):
         redirect_port = _parse_int(env, "DEPUTY_OAUTH_REDIRECT_PORT", _DEFAULT_REDIRECT_PORT)
 
         # OAuth is a usable path when both client creds are present (so 'deputy-mcp login'
-        # can run) or a stored refresh token already exists (never read for its value).
-        oauth_present = bool(oauth_client_id and oauth_client_secret) or _token_store_has_refresh(
-            token_store_path
-        )
+        # can mint/refresh a token). Keyed on credentials, not on a token-store file, so
+        # config resolution stays deterministic and never depends on filesystem state.
+        oauth_present = bool(oauth_client_id and oauth_client_secret)
 
         # Fail closed naming ALL THREE legitimate paths: a permanent API token (full
         # client), OAuth login (full client, no admin needed), or a personal iCal feed URL

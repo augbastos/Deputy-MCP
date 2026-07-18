@@ -9,6 +9,7 @@ fictional URL and a hand-written VCALENDAR). Only ``get_my_roster`` and ``next_s
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 
@@ -23,8 +24,17 @@ from .test_ical_source import FAKE_CAL_URL, FUTURE_FEED, SAMPLE_FEED
 
 
 def _ical_config() -> DeputyConfig:
-    """A cache-disabled iCal-mode config for the fictional feed."""
-    return DeputyConfig.from_env({"DEPUTY_CALENDAR_URL": FAKE_CAL_URL, "DEPUTY_CACHE_TTL": "0"})
+    """A cache-disabled iCal-mode config for the fictional feed.
+
+    Passes an explicit env mapping (hermetic — no cwd ``.env``), and forwards the
+    isolated ``DEPUTY_TOKEN_STORE`` the autouse fixture pins so a real ``~/.deputy-mcp``
+    token store can never flip this config into OAuth mode.
+    """
+    env = {"DEPUTY_CALENDAR_URL": FAKE_CAL_URL, "DEPUTY_CACHE_TTL": "0"}
+    store = os.environ.get("DEPUTY_TOKEN_STORE")
+    if store:
+        env["DEPUTY_TOKEN_STORE"] = store
+    return DeputyConfig.from_env(env)
 
 
 def _cal(text: str) -> httpx.Response:

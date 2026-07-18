@@ -89,12 +89,12 @@ def test_oauth_resolves_from_client_credentials_alone(tmp_path: Path) -> None:
     assert config.auth_kind == "oauth"
 
 
-def test_oauth_resolves_from_stored_token_without_client_creds(tmp_path: Path) -> None:
-    # A stored refresh token alone (no client id/secret in env) still selects OAuth: the
-    # precedence check reads the store file's presence, never its secret values.
-    config = DeputyConfig.from_env({"DEPUTY_TOKEN_STORE": _write_store(tmp_path)})
-    assert config.auth_kind == "oauth"
-    assert config.mode == "api"
+def test_stored_token_without_client_creds_fails_closed(tmp_path: Path) -> None:
+    # A token store on disk is NOT a credential by itself. Refreshing an access token
+    # needs the client id + secret, so config resolution is keyed on credentials, never
+    # on a filesystem file — a bare store with no creds fails closed like nothing is set.
+    with pytest.raises(DeputyConfigError):
+        DeputyConfig.from_env({"DEPUTY_TOKEN_STORE": _write_store(tmp_path)})
 
 
 def test_ical_resolves_when_only_calendar_url(tmp_path: Path) -> None:
@@ -186,8 +186,10 @@ def test_oauth_client_secret_is_redacted_but_accessible(tmp_path: Path) -> None:
 
 
 def test_oauth_client_secret_accessor_raises_when_unset(tmp_path: Path) -> None:
-    # A stored-token-only OAuth config has no client secret in env; the accessor must
-    # fail with an actionable message rather than return an empty string.
-    config = DeputyConfig.from_env({"DEPUTY_TOKEN_STORE": _write_store(tmp_path)})
+    # A config with no OAuth secret (here, iCal mode) must fail the accessor with an
+    # actionable message rather than return an empty string.
+    config = DeputyConfig.from_env(
+        {"DEPUTY_CALENDAR_URL": _CAL_URL, "DEPUTY_TOKEN_STORE": _absent_store(tmp_path)}
+    )
     with pytest.raises(DeputyConfigError):
         config.oauth_client_secret_value()
