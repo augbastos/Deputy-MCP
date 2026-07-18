@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, ConfigDict
 
 __all__ = [
+    "Colleague",
     "Company",
     "Contact",
     "DeputyModel",
@@ -148,6 +149,34 @@ class Employee(DeputyModel):
     Role: int | None = None
     Created: str | None = None
     Modified: str | None = None
+
+
+class Colleague(DeputyModel):
+    """A person the caller works with, from the self-service ``GET /api/v1/my/colleague``.
+
+    This feed is reachable by ANY employee token (it lists your own colleagues), so unlike
+    the manager-only ``Employee/QUERY`` it needs no elevated access level.
+
+    Only the non-contact fields are declared. Deputy also returns each colleague's contact
+    details — ``Email``, ``Mobile``, ``Photo``, ``PhotoLinkId`` — and those are
+    deliberately left UNDECLARED so they live only in ``model_extra`` and are never
+    rendered: surfacing a colleague's private contact data is a privacy (and, under GDPR, a
+    legal) breach the tool must not commit. ``IsSameWorkplace`` marks colleagues at the
+    caller's own location; ``IsSubordinate`` marks the caller's direct reports; ``EmpId``
+    -> Employee.Id. ``Status`` is an integer code (its exact mapping is install-dependent
+    and not documented, so it is passed through, not interpreted). ``Company`` carries the
+    workplace label as returned by this endpoint — its exact type is a smoke-test gap and
+    should be confirmed against a live install; it is not rendered either way.
+    """
+
+    DisplayName: str | None = None
+    FirstName: str | None = None
+    LastName: str | None = None
+    EmpId: int | None = None
+    Company: int | None = None  # the company/location id (verified live: int, e.g. 22)
+    Status: int | None = None
+    IsSameWorkplace: bool | None = None
+    IsSubordinate: bool | None = None
 
 
 class OperationalUnit(DeputyModel):

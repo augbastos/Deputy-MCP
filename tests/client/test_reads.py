@@ -32,6 +32,7 @@ import pytest
 import respx
 
 from deputy_mcp.client import (
+    Colleague,
     DeputyClient,
     DeputyConfig,
     DeputyNotFoundError,
@@ -289,6 +290,86 @@ async def test_get_my_timesheets_query_403_degrades_to_my_data(
         return_value=httpx.Response(403, json=_OBJECT_DENIED)
     )
     assert await client.get_my_timesheets(date(2021, 1, 1), date(2021, 1, 20)) == []
+
+
+# -- get_my_colleagues: /api/v1/my/colleague self-service directory ----------
+
+
+def _colleague(**overrides: Any) -> dict[str, Any]:
+    """A fictional ``/my/colleague`` record (contact fields included on purpose).
+
+    The email/mobile/photo keys are present so tests can prove the client keeps them in
+    ``model_extra`` and never promotes them to declared fields — the renderer is what
+    drops them from output.
+    """
+    base: dict[str, Any] = {
+        "DisplayName": "Sam O'Brien",
+        "FirstName": "Sam",
+        "LastName": "O'Brien",
+        "EmpId": 102,
+        "Company": 1,
+        "Position": 11,
+        "Role": 45,
+        "Status": 1,
+        "IsSameWorkplace": True,
+        "IsSubordinate": False,
+        "Email": "sam@example.test",
+        "Mobile": "+353871234567",
+        "Photo": "https://cloud-nine-cafe.eu.deputy.com/photo/sam.jpg",
+        "PhotoLinkId": 777,
+        "Pronouns": None,
+        "CustomPronouns": None,
+        "Modified": "2024-01-15T12:00:00",
+        "UserId": 202,
+    }
+    base.update(overrides)
+    return base
+
+
+async def test_get_my_colleagues_hits_colleague_endpoint(
+    client: DeputyClient, deputy_api: respx.MockRouter
+) -> None:
+    # Self-service: the bare /my/colleague array validates into Colleague models and the
+    # same/other split derives straight from IsSameWorkplace. No QUERY path is used.
+    route = deputy_api.get("/my/colleague").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                _colleague(DisplayName="Sam O'Brien", EmpId=102, IsSameWorkplace=True),
+                _colleague(
+                    DisplayName="Jo Murphy",
+                    FirstName="Jo",
+                    LastName="Murphy",
+                    EmpId=103,
+                    IsSameWorkplace=False,
+                    IsSubordinate=True,
+                ),
+            ],
+        )
+    )
+    colleagues = await client.get_my_colleagues()
+    assert route.called
+    assert [c.DisplayName for c in colleagues] == ["Sam O'Brien", "Jo Murphy"]
+    same = [c for c in colleagues if c.IsSameWorkplace]
+    other = [c for c in colleagues if not c.IsSameWorkplace]
+    assert [c.EmpId for c in same] == [102]
+    assert [c.EmpId for c in other] == [103]
+    # Contact PII is NOT a declared field — it survives only in the model extra.
+    assert "Email" not in Colleague.model_fields
+    assert "Mobile" not in Colleague.model_fields
+    assert "Photo" not in Colleague.model_fields
+    assert "PhotoLinkId" not in Colleague.model_fields
+    assert (colleagues[0].model_extra or {})["Email"] == "sam@example.test"
+
+
+async def test_get_my_colleagues_non_array_degrades_to_empty(
+    client: DeputyClient, deputy_api: respx.MockRouter
+) -> None:
+    # A non-array response (e.g. an error envelope) degrades to an empty list, never raises.
+    deputy_api.get("/my/colleague").mock(
+        return_value=httpx.Response(200, json={"error": "unexpected"})
+    )
+    assert await client.get_my_colleagues() == []
 
 
 # -- Manager/admin Roster/QUERY reads (exact bodies) -------------------------

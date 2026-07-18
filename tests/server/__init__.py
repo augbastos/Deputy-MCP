@@ -27,7 +27,7 @@ __all__ = [
     "wire_write_api",
 ]
 
-#: The ten read tools every server build must expose.
+#: The eleven read tools every server build must expose.
 READ_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "deputy_whoami",
@@ -40,6 +40,7 @@ READ_TOOL_NAMES: frozenset[str] = frozenset(
         "deputy_get_areas",
         "deputy_next_shift",
         "deputy_get_my_timesheets",
+        "deputy_get_my_colleagues",
     }
 )
 
@@ -84,13 +85,15 @@ def wire_read_api(
     operational_units: list[dict[str, Any]],
     rosters: list[dict[str, Any]],
     timesheets: list[dict[str, Any]],
+    colleagues: list[dict[str, Any]] | None = None,
 ) -> None:
     """Register every read endpoint the read tools / resources may touch.
 
     The same Roster/QUERY route backs team roster, shift search, next-shift and the
     rostered-now half of who-is-working; the same Timesheet/QUERY route backs the
     clocked-in half. That is fine for smoke coverage -- the tool wiring, argument
-    handling and rendering are what these tests assert.
+    handling and rendering are what these tests assert. ``colleagues`` defaults to an
+    empty list so the self-service ``/my/colleague`` route is always wired.
     """
     # The re-architected client resolves identity from /me first (works at any access
     # level); /resource/Account/WhoAmI stays wired as the legacy 404 fallback.
@@ -98,6 +101,7 @@ def wire_read_api(
     router.get("/resource/Account/WhoAmI").mock(return_value=_ok(whoami))
     router.get("/my/roster").mock(return_value=_ok(rosters))
     router.get("/my/timesheets").mock(return_value=_ok(timesheets))
+    router.get("/my/colleague").mock(return_value=_ok(colleagues or []))
     router.post("/resource/Company/QUERY").mock(return_value=_ok([company]))
     router.post("/resource/OperationalUnit/QUERY").mock(return_value=_ok(operational_units))
     router.post("/resource/Employee/QUERY").mock(return_value=_ok(employees))

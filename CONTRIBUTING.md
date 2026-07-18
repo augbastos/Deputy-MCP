@@ -57,7 +57,7 @@ src/deputy_mcp/
 
   server/             # ── The MCP layer (FastMCP). Imports from client, never vice-versa. ──
     app.py            #   create_server(): builds one client + FastMCP, wires tools/resources
-    tools_read.py     #   the 10 read tools
+    tools_read.py     #   the 11 read tools
     _read_helpers.py  #   arg coercion + error formatting shared by the read tools
     tools_write.py    #   the 5 write tools (registered ONLY when DEPUTY_ALLOW_WRITES=true)
     resources.py      #   MCP resources

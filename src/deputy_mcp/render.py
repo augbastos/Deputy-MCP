@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from deputy_mcp.client import EMPLOYEE_JOIN
 from deputy_mcp.client.models import (
+    Colleague,
     Company,
     Employee,
     OperationalUnit,
@@ -50,6 +51,7 @@ __all__ = [
     "render_areas",
     "render_calendar_url",
     "render_calendar_url_ical",
+    "render_colleagues",
     "render_employee_list",
     "render_next_shift",
     "render_roster_list",
@@ -295,6 +297,62 @@ def render_employee_list(
         role = f", role #{emp.Role}" if emp.Role is not None else ""
         lines.append(f"- **{employee_display(emp)}** (id {emp.Id}) — {status}, {location}{role}")
     return "\n".join(lines)
+
+
+def _colleague_name(colleague: Colleague) -> str:
+    """Display name for a colleague, falling back to First+Last, then 'Unknown'."""
+    if colleague.DisplayName and colleague.DisplayName.strip():
+        return colleague.DisplayName.strip()
+    name = " ".join(part for part in (colleague.FirstName, colleague.LastName) if part)
+    return name or "Unknown"
+
+
+def _colleague_public(colleague: Colleague) -> dict[str, Any]:
+    """Curate a colleague down to the privacy-safe fields for the JSON view.
+
+    Rebuilt field-by-field from an allowlist (name, workplace membership, subordinate flag,
+    status) rather than dumping the record, so the contact PII Deputy ships (``Email``,
+    ``Mobile``, ``Photo``, ``PhotoLinkId`` — all in the model's extra) can never leak into
+    the JSON output.
+    """
+    return {
+        "name": _colleague_name(colleague),
+        "is_same_workplace": bool(colleague.IsSameWorkplace),
+        "is_subordinate": bool(colleague.IsSubordinate),
+        "status": colleague.Status,
+    }
+
+
+def render_colleagues(
+    colleagues: list[Colleague],
+    response_format: ResponseFormat,
+    *,
+    title: str = "My colleagues",
+) -> str:
+    """Render the caller's colleagues, grouped same-workplace vs other locations.
+
+    This renderer owns BOTH formats (rather than deferring to :func:`render`) because the
+    JSON view must be a curated projection, not the raw records. PRIVACY-CRITICAL: only
+    each colleague's name and workplace membership are ever surfaced. Deputy returns each
+    colleague's contact details (``Email``, ``Mobile``, ``Photo``, ``PhotoLinkId``) in the
+    model's extra; they are excluded from BOTH the markdown and the JSON — the JSON emits a
+    curated ``{name, is_same_workplace, is_subordinate, status}`` dict per colleague so the
+    contact PII never leaves the tool.
+    """
+    if response_format == "json":
+        return to_json([_colleague_public(colleague) for colleague in colleagues])
+    if not colleagues:
+        return f"### {title}\n\n_No colleagues found._"
+    same = [colleague for colleague in colleagues if colleague.IsSameWorkplace]
+    other = [colleague for colleague in colleagues if not colleague.IsSameWorkplace]
+    lines = [f"### {title}", ""]
+    for heading, group in (("Same workplace", same), ("Other locations", other)):
+        if not group:
+            continue
+        lines.append(f"**{heading} ({len(group)})**")
+        lines += [f"- **{_colleague_name(colleague)}**" for colleague in group]
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def render_areas(units: list[OperationalUnit]) -> str:

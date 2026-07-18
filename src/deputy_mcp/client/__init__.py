@@ -31,6 +31,7 @@ from deputy_mcp.client.errors import (
 from deputy_mcp.client.http import DeputyHTTP
 from deputy_mcp.client.ical import IcalRosterSource, RosterEvent
 from deputy_mcp.client.models import (
+    Colleague,
     Company,
     Contact,
     DeputyModel,
@@ -49,6 +50,7 @@ from deputy_mcp.oauth import TokenStore
 
 __all__ = [
     "EMPLOYEE_JOIN",
+    "Colleague",
     "Company",
     "Contact",
     "DeputyAPIError",

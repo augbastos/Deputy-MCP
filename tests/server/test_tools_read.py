@@ -232,6 +232,7 @@ async def test_manager_tool_permission_error_redirects(
         ("deputy_get_areas", {}, "Areas"),
         ("deputy_next_shift", {}, "Next shift"),
         ("deputy_get_my_timesheets", {}, "My timesheets"),
+        ("deputy_get_my_colleagues", {}, "My colleagues"),
     ],
 )
 async def test_read_tool_renders_markdown(
@@ -349,6 +350,157 @@ async def test_get_employee_info_by_numeric_id(
     async with Client(server) as client:
         result = await client.call_tool("deputy_get_employee_info", {"name_or_id": "101"})
     assert "Alex Rivera" in tool_text(result)
+
+
+# --------------------------------------------------------------------------- #
+# deputy_get_my_colleagues: self-service directory + privacy boundary
+# --------------------------------------------------------------------------- #
+def _colleagues_payload() -> list[dict[str, Any]]:
+    """Two fictional colleagues carrying contact PII, to prove none of it reaches output.
+
+    Sam is at the caller's own workplace; Jo is at another location. The email/mobile/photo
+    fields are deliberately present so the privacy tripwire has something to catch.
+    """
+    return [
+        {
+            "DisplayName": "Sam O'Brien",
+            "FirstName": "Sam",
+            "LastName": "O'Brien",
+            "EmpId": 102,
+            "Company": 1,
+            "Status": 1,
+            "IsSameWorkplace": True,
+            "IsSubordinate": False,
+            "Email": "sam@example.test",
+            "Mobile": "+353871234567",
+            "Photo": "https://cloud-nine-cafe.eu.deputy.com/photo/sam.jpg",
+            "PhotoLinkId": 777,
+        },
+        {
+            "DisplayName": "Jo Murphy",
+            "FirstName": "Jo",
+            "LastName": "Murphy",
+            "EmpId": 103,
+            "Company": 2,
+            "Status": 1,
+            "IsSameWorkplace": False,
+            "IsSubordinate": True,
+            "Email": "jo@example.test",
+            "Mobile": "+353879876543",
+            "Photo": "https://cloud-nine-cafe.eu.deputy.com/photo/jo.jpg",
+            "PhotoLinkId": 778,
+        },
+    ]
+
+
+async def test_get_my_colleagues_defaults_to_same_workplace(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """Default same_workplace_only=True shows only the caller's own-location colleagues."""
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(),
+        company=make_company(),
+        employees=sample_employees,
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+        colleagues=_colleagues_payload(),
+    )
+    server = create_server()
+    async with Client(server) as client:
+        md = tool_text(await client.call_tool("deputy_get_my_colleagues", {}))
+    assert "Same workplace" in md
+    assert "Sam O'Brien" in md  # same workplace -> shown
+    assert "Jo Murphy" not in md  # other location -> filtered out by default
+    assert "Other locations" not in md
+
+
+async def test_get_my_colleagues_all_locations_when_flag_off(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """same_workplace_only=False groups everyone under same-workplace vs other-locations."""
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(),
+        company=make_company(),
+        employees=sample_employees,
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+        colleagues=_colleagues_payload(),
+    )
+    server = create_server()
+    async with Client(server) as client:
+        md = tool_text(
+            await client.call_tool("deputy_get_my_colleagues", {"same_workplace_only": False})
+        )
+    assert "Same workplace" in md
+    assert "Other locations" in md
+    assert "Sam O'Brien" in md
+    assert "Jo Murphy" in md
+
+
+async def test_get_my_colleagues_never_leaks_contact_pii(
+    deputy_api: respx.MockRouter,
+    make_whoami: PayloadFactory,
+    make_company: PayloadFactory,
+    make_operational_unit: PayloadFactory,
+    make_roster: PayloadFactory,
+    make_timesheet: PayloadFactory,
+    sample_employees: list[dict[str, Any]],
+) -> None:
+    """PRIVACY TRIPWIRE: colleagues' email/mobile/photo never appear in markdown OR json."""
+    wire_read_api(
+        deputy_api,
+        whoami=make_whoami(),
+        company=make_company(),
+        employees=sample_employees,
+        operational_units=[make_operational_unit()],
+        rosters=[make_roster()],
+        timesheets=[make_timesheet()],
+        colleagues=_colleagues_payload(),
+    )
+    server = create_server()
+    async with Client(server) as client:
+        md = tool_text(
+            await client.call_tool("deputy_get_my_colleagues", {"same_workplace_only": False})
+        )
+        js = tool_text(
+            await client.call_tool(
+                "deputy_get_my_colleagues",
+                {"same_workplace_only": False, "response_format": "json"},
+            )
+        )
+    # None of the contact PII may appear in either rendering.
+    for leak in (
+        "sam@example.test",
+        "+353871234567",
+        "jo@example.test",
+        "+353879876543",
+        "photo/sam.jpg",
+        "photo/jo.jpg",
+    ):
+        assert leak not in md, f"contact PII leaked into markdown: {leak}"
+        assert leak not in js, f"contact PII leaked into json: {leak}"
+    # ...but the safe fields DO surface. The json is a curated projection, not the record.
+    assert "Sam O'Brien" in md
+    parsed = json.loads(js)
+    assert {person["name"] for person in parsed} == {"Sam O'Brien", "Jo Murphy"}
+    for person in parsed:
+        assert set(person) == {"name", "is_same_workplace", "is_subordinate", "status"}
 
 
 # --------------------------------------------------------------------------- #

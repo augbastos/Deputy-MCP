@@ -8,7 +8,7 @@
 
 > PyPI: coming soon. Until the first release is published, install from source (see [Quickstart](#quickstart)).
 
-deputy-mcp exposes Deputy's workforce data to a language model through the [Model Context Protocol](https://modelcontextprotocol.io): ten read tools for schedules, timesheets, people, locations and your calendar feed — the self-service ones work on any employee token, the team/manager ones need an elevated access level — plus five write tools (clock in/out, claim an open shift, request a swap, set unavailability) that stay hidden until you explicitly opt in. It runs locally, talks only to your own Deputy install, and inherits exactly the permissions of the token you give it.
+deputy-mcp exposes Deputy's workforce data to a language model through the [Model Context Protocol](https://modelcontextprotocol.io): eleven read tools for schedules, timesheets, people, colleagues, locations and your calendar feed — the self-service ones work on any employee token, the team/manager ones need an elevated access level — plus five write tools (clock in/out, claim an open shift, request a swap, set unavailability) that stay hidden until you explicitly opt in. It runs locally, talks only to your own Deputy install, and inherits exactly the permissions of the token you give it.
 
 ---
 
@@ -153,6 +153,7 @@ Read tools split by the Deputy access level they require. On a plain **employee*
 | `deputy_get_my_timesheets` | `start_date?`, `end_date?` | Your own timesheets — actual worked time — with a worked-hours total (defaults to the last 7 days). |
 | `deputy_get_my_calendar_url` | — | Your personal Deputy iCal subscription URL. Add it once to Google, Apple or Outlook Calendar to see your shifts there, auto-refreshing as your roster changes. |
 | `deputy_get_areas` | — | The areas (operational units / work locations) you work, with their ids. On an employee token these are derived from your own roster; a manager/admin token lists every area on the install. |
+| `deputy_get_my_colleagues` | `same_workplace_only?` | The people you work with, grouped by same workplace vs other locations (defaults to just your own location). Shows names and workplace membership only — never colleagues' contact details. |
 
 ### Manager / admin read tools (needs an elevated access level)
 

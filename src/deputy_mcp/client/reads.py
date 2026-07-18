@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from deputy_mcp.client.errors import DeputyNotFoundError, DeputyPermissionError
 from deputy_mcp.client.http import DeputyHTTP
 from deputy_mcp.client.models import (
+    Colleague,
     Company,
     Employee,
     OperationalUnit,
@@ -468,6 +469,20 @@ class ReadsMixin:
         except DeputyPermissionError:
             return filtered
         return _as_models(records, Timesheet)
+
+    async def get_my_colleagues(self) -> list[Colleague]:
+        """Return the people the caller works with (``GET /api/v1/my/colleague``).
+
+        Self-service: this endpoint works for ANY employee token — no manager/admin access
+        level and no ``Employee/QUERY`` path — because it lists the caller's OWN colleagues.
+        It returns a bare JSON array of colleague records; ``IsSameWorkplace`` marks those at
+        the caller's own location. A non-array response degrades to an empty list. The contact
+        fields Deputy includes (email, mobile, photo) are kept only in each model's extra and
+        are never surfaced by the renderer.
+        """
+        data = await self._http.request("GET", "/my/colleague", cacheable=True)
+        records = [rec for rec in data if isinstance(rec, dict)] if isinstance(data, list) else []
+        return _as_models(records, Colleague)
 
     async def _company_from_me(self) -> Company | None:
         """Return the install's company/location from ``/me``'s ``CompanyObject``.

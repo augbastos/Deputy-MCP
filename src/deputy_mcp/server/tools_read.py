@@ -49,6 +49,7 @@ from deputy_mcp.server.formatting import (
     render_areas,
     render_calendar_url,
     render_calendar_url_ical,
+    render_colleagues,
     render_employee_list,
     render_next_shift,
     render_roster_list,
@@ -535,5 +536,36 @@ def _register_api_tools(
                 lambda: render_timesheet_list(timesheets, tz, label, title=title, areas=areas),
                 response_format,
             )
+        except DeputyError as exc:
+            return format_error(exc)
+
+    @mcp.tool(name="deputy_get_my_colleagues", annotations=read_only)
+    async def deputy_get_my_colleagues(
+        same_workplace_only: Annotated[
+            bool, Field(description="Only colleagues at your own workplace/location.")
+        ] = True,
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
+    ) -> str:
+        """List the people you work with (self-service colleague directory).
+
+        Works on any employee token — it reads your OWN colleague list, so no manager or
+        admin access level is needed. 'same_workplace_only' defaults to True (just your
+        location); set it False to include colleagues at other locations too. Only each
+        person's name and workplace membership are shown — never their contact details.
+
+        When NOT to use: to see who is SCHEDULED on a shift (use deputy_get_team_roster) or
+        who is clocked in right now (use deputy_who_is_working) — your colleagues are the
+        people you work WITH, not who is on today's roster.
+
+        Returns markdown (colleagues grouped by same workplace vs other locations, names
+        only) or, with response_format="json", a list of ``{name, is_same_workplace,
+        is_subordinate, status}`` objects (contact details are never included).
+        """
+        client = get_client()
+        try:
+            colleagues = await client.get_my_colleagues()
+            if same_workplace_only:
+                colleagues = [c for c in colleagues if c.IsSameWorkplace]
+            return render_colleagues(colleagues, response_format)
         except DeputyError as exc:
             return format_error(exc)
