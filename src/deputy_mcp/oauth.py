@@ -314,13 +314,17 @@ def _tokens_from_response(
     )
 
 
-async def run_login_flow(config: DeputyConfig) -> OAuthTokens:
+async def run_login_flow(config: DeputyConfig, *, open_browser: bool = True) -> OAuthTokens:
     """Run the interactive loopback Authorization Code flow and return tokens.
 
     Starts a one-shot loopback server on ``config.redirect_port``, opens the browser
     to the authorize URL with a random ``state``, waits for the ``/callback`` GET,
     validates ``state`` (constant-time), exchanges the code and returns the tokens.
     Never prints a secret — only progress; the caller surfaces base_url/expiry.
+
+    When ``open_browser`` is ``False`` the browser is not launched; the authorize URL
+    is printed (flushed) and written to ``authorize_url.txt`` beside the token store,
+    so the sign-in can be completed manually or in a remote/headless setup.
     """
     client_id = (config.oauth_client_id or "").strip()
     if not client_id or config.oauth_client_secret is None:
@@ -358,8 +362,16 @@ async def run_login_flow(config: DeputyConfig) -> OAuthTokens:
     thread.start()
     try:
         authorize_url = build_authorize_url(client_id, redirect_uri, state)
-        webbrowser.open(authorize_url)
-        print("Opening your browser to authorize deputy-mcp. Waiting for sign-in...")
+        if open_browser:
+            webbrowser.open(authorize_url)
+            print("Opening your browser to authorize deputy-mcp. Waiting for sign-in...")
+        else:
+            url_file = config.token_store_path.parent / "authorize_url.txt"
+            url_file.parent.mkdir(parents=True, exist_ok=True)
+            url_file.write_text(authorize_url, encoding="utf-8")
+            print(f"Authorize URL written to {url_file}", flush=True)
+            print(authorize_url, flush=True)
+            print("Waiting for sign-in...", flush=True)
         # Block off the event loop thread so a slow browser cannot stall it.
         got = await asyncio.to_thread(result.event.wait, _CALLBACK_TIMEOUT_S)
         if not got:

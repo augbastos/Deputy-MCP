@@ -119,9 +119,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Employee name or id (defaults to you).",
     )
 
-    sub.add_parser(
+    p_login = sub.add_parser(
         "login",
         help="Sign in via OAuth (browser) and store an access token for API use.",
+    )
+    p_login.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not open a browser; print the authorize URL to open manually.",
     )
     sub.add_parser("logout", help="Delete the stored OAuth token (sign out).")
     return parser
@@ -356,7 +361,7 @@ def _print_register_steps(port: int) -> None:
     print("  4. Run 'deputy-mcp login' again.")
 
 
-def _cmd_login() -> int:
+def _cmd_login(*, open_browser: bool = True) -> int:
     """Run the OAuth loopback flow and persist the tokens; never print a token."""
     from deputy_mcp import oauth
 
@@ -372,7 +377,7 @@ def _cmd_login() -> int:
         return 1
 
     try:
-        tokens = asyncio.run(oauth.run_login_flow(config))
+        tokens = asyncio.run(oauth.run_login_flow(config, open_browser=open_browser))
     except DeputyError as exc:
         _fail(exc)
         return 1
@@ -446,7 +451,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if command == "serve":
         return _serve()
     if command == "login":
-        return _cmd_login()
+        return _cmd_login(open_browser=not args.no_browser)
     if command == "logout":
         return _cmd_logout()
 
