@@ -18,7 +18,7 @@ tools. Python **3.11+** is required.
 uv sync                     # create the venv and install all deps (incl. dev group)
 
 # The three gates a change must pass — all must be green:
-uv run pytest               # the full suite (297 tests today)
+uv run pytest               # the full suite (all mocked, no live calls)
 uv run ruff check .         # lint
 uv run mypy                 # strict type-check (configured over src/)
 ```
@@ -40,6 +40,7 @@ the CLI without dragging in FastMCP.
 ```
 src/deputy_mcp/
   config.py           # DEPUTY_* env → validated DeputyConfig (fails closed; token is SecretStr)
+  oauth.py            # OAuth 2.0 loopback login (`deputy-mcp login`); mints/refreshes tokens
   cli.py              # console entry point
   __main__.py         # `python -m deputy_mcp` / `deputy-mcp` script
 
@@ -51,10 +52,13 @@ src/deputy_mcp/
     reads.py          #   ReadsMixin — read methods
     writes.py         #   WritesMixin — mutating methods
     query.py          #   Resource-API query helpers (pagination, //assoc, etc.)
+    whoami.py         #   pure accessors over the /api/v1/me (WhoAmI) response
+    ical.py           #   personal iCal feed reader (roster-only, token-free mode)
 
   server/             # ── The MCP layer (FastMCP). Imports from client, never vice-versa. ──
     app.py            #   create_server(): builds one client + FastMCP, wires tools/resources
-    tools_read.py     #   the 9 read tools
+    tools_read.py     #   the 10 read tools
+    _read_helpers.py  #   arg coercion + error formatting shared by the read tools
     tools_write.py    #   the 5 write tools (registered ONLY when DEPUTY_ALLOW_WRITES=true)
     resources.py      #   MCP resources
     prompts.py        #   MCP prompts

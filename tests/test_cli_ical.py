@@ -17,8 +17,13 @@ import pytest
 import respx
 
 from deputy_mcp import cli
+from deputy_mcp.config import DEPUTY_ENV_VARS
 
 FEED_URL = "https://cloud-nine-cafe.eu.deputy.com/ical/feedtoken123.ics"
+# The secret is the feed token embedded in the URL. A renderer that leaks only the token
+# (bare, path-only, or url-encoded) would slip past a full-URL check, so tripwires assert
+# the token substring is absent — not merely the whole URL.
+_FEED_TOKEN = "feedtoken123"
 
 ICAL_BODY = "\r\n".join(
     [
@@ -35,21 +40,9 @@ ICAL_BODY = "\r\n".join(
     ]
 )
 
-_VARS = (
-    "DEPUTY_API_TOKEN",
-    "DEPUTY_BASE_URL",
-    "DEPUTY_ALLOW_WRITES",
-    "DEPUTY_ALLOW_CUSTOM_HOST",
-    "DEPUTY_CACHE_TTL",
-    "DEPUTY_TIMEOUT",
-    "DEPUTY_MAX_RETRIES",
-    "DEPUTY_CALENDAR_URL",
-    "DEPUTY_OAUTH_CLIENT_ID",
-    "DEPUTY_OAUTH_CLIENT_SECRET",
-    "DEPUTY_OAUTH_REDIRECT_PORT",
-    "DEPUTY_TOKEN_STORE",
-    "DEPUTY_ENV_FILE",
-)
+# Every DEPUTY_* variable the config reads, single-sourced from config so this test's
+# isolation can never miss a newly added variable.
+_VARS = DEPUTY_ENV_VARS
 
 
 @pytest.fixture
@@ -83,6 +76,7 @@ def test_roster_works_in_ical_mode(
     assert "My roster" in out
     assert "Front of House" in out
     assert FEED_URL not in out
+    assert _FEED_TOKEN not in out
 
 
 def test_next_works_in_ical_mode(
@@ -107,3 +101,4 @@ def test_api_only_subcommand_fails_closed(
     assert "DEPUTY_API_TOKEN" in captured.err
     assert "Traceback" not in captured.err
     assert FEED_URL not in captured.err
+    assert _FEED_TOKEN not in captured.err

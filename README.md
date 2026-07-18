@@ -40,7 +40,7 @@ Not an admin, so you can't create a token? Deputy still gives **every employee**
 ```bash
 claude mcp add deputy \
   -e DEPUTY_CALENDAR_URL=https://your-company.eu.deputy.com/exec/ical/xxxxxxxx/My_Roster.ics \
-  -- uvx deputy-mcp
+  -- uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp
 ```
 
 **Claude Desktop**
@@ -50,7 +50,7 @@ claude mcp add deputy \
   "mcpServers": {
     "deputy": {
       "command": "uvx",
-      "args": ["deputy-mcp"],
+      "args": ["--from", "git+https://github.com/augbastos/deputy-mcp", "deputy-mcp"],
       "env": {
         "DEPUTY_CALENDAR_URL": "https://your-company.eu.deputy.com/exec/ical/xxxxxxxx/My_Roster.ics"
       }
@@ -67,7 +67,7 @@ claude mcp add deputy \
 claude mcp add deputy \
   -e DEPUTY_API_TOKEN=your-deputy-token \
   -e DEPUTY_BASE_URL=https://your-company.eu.deputy.com \
-  -- uvx deputy-mcp
+  -- uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp
 ```
 
 Add `-e DEPUTY_ALLOW_WRITES=true` if you want the write tools (see [Security & privacy](#security--privacy)).
@@ -81,7 +81,7 @@ Add the server to your `claude_desktop_config.json`:
   "mcpServers": {
     "deputy": {
       "command": "uvx",
-      "args": ["deputy-mcp"],
+      "args": ["--from", "git+https://github.com/augbastos/deputy-mcp", "deputy-mcp"],
       "env": {
         "DEPUTY_API_TOKEN": "your-deputy-token",
         "DEPUTY_BASE_URL": "https://your-company.eu.deputy.com"
@@ -93,24 +93,13 @@ Add the server to your `claude_desktop_config.json`:
 
 ### Any other MCP client
 
-deputy-mcp speaks MCP over **stdio**. Point your client at the command `uvx deputy-mcp` (or `deputy-mcp` once installed) and pass the `DEPUTY_*` environment variables listed under [Configuration](#configuration).
+deputy-mcp speaks MCP over **stdio**. Point your client at the command `uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp` and pass the `DEPUTY_*` environment variables listed under [Configuration](#configuration).
 
-### From source (while PyPI publish is pending)
+### Once deputy-mcp is on PyPI
 
-Until the package is on PyPI, install and run it straight from GitHub with `uvx`:
-
-```bash
-uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp
-```
-
-Or wire that same command into Claude Code:
-
-```bash
-claude mcp add deputy \
-  -e DEPUTY_API_TOKEN=your-deputy-token \
-  -e DEPUTY_BASE_URL=https://your-company.eu.deputy.com \
-  -- uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp
-```
+The commands above install straight from GitHub because the package is **not published to
+PyPI yet**. Once the first release lands, the `--from git+https://github.com/augbastos/deputy-mcp`
+part is no longer needed and the shorter `uvx deputy-mcp` will work anywhere above.
 
 ---
 
@@ -219,6 +208,8 @@ asyncio.run(main())
 - **Writes are opt-in and off by default.** A workforce system a model can drive should not be able to clock you in or give your shift away unless you asked for that. Set `DEPUTY_ALLOW_WRITES=true` to enable the five write tools; leave it unset and they are never registered.
 - **The token is your permissions.** deputy-mcp does exactly what your Deputy account can do — no more. Use a token from **your own account** for personal use; do not hand it an admin or service-account token "just in case", because the model then inherits that reach.
 - **Fail-closed host policy.** `DEPUTY_BASE_URL` must resolve to a `*.deputy.com` host or startup refuses, so a typo can't quietly point your token at some other server. Legitimate enterprise custom domains opt back in with `DEPUTY_ALLOW_CUSTOM_HOST=true`.
+- **Security flags never come from an auto-loaded directory `.env`.** For convenience, `DEPUTY_*` values can be read from a `.env` in the current directory — but a stdio server's working directory is chosen by the (host-controlled) MCP host, so an untrusted project's `.env` must not be able to escalate privilege. The three security-sensitive keys — `DEPUTY_ALLOW_WRITES`, `DEPUTY_ALLOW_CUSTOM_HOST` and `DEPUTY_TOKEN_STORE` — are therefore honoured **only** from the real process environment or from a file you name explicitly with `DEPUTY_ENV_FILE`, never from an auto-discovered cwd `.env`. Credential-loading keys still load from a cwd `.env`, so an ordinary setup is unaffected.
+- **OAuth login mode is available (`deputy-mcp login`), endpoints not yet smoke-tested.** Besides the permanent admin token and the read-only iCal feed, deputy-mcp ships an OAuth 2.0 authorization-code login for employees who cannot mint a token: register an app, set `DEPUTY_OAUTH_CLIENT_ID` / `DEPUTY_OAUTH_CLIENT_SECRET`, and run `deputy-mcp login` to obtain an access token bound to your own account. The client secret and the minted tokens are held as redacted secrets and never logged. **Caveat:** the live Deputy OAuth endpoints are **smoke-test-pending** — the flow is coded against Deputy's documented endpoints but has not yet been exercised against a real install, so treat this mode as unverified until that smoke test runs.
 - **Runs locally, zero telemetry.** The server runs on your machine and phones nothing home. Its only network traffic is HTTPS to your own Deputy install. Your colleagues' roster data stays between you and Deputy — it never passes through any third party. The token is held as a redacted secret and is never logged or printed.
 
 ---
@@ -264,7 +255,7 @@ Requires [uv](https://docs.astral.sh/uv/). Clone the repo, then:
 
 ```bash
 uv sync                        # install into a local .venv
-uv run pytest                  # run the test suite (297 tests, all mocked)
+uv run pytest                  # run the full test suite (all mocked, no live calls)
 uv run pytest -m live          # optional: read-only smoke tests against a real
                                # Deputy instance (skipped without DEPUTY_* creds)
 uv run ruff check .            # lint
