@@ -48,6 +48,7 @@ from deputy_mcp.config import DeputyConfig
 from deputy_mcp.oauth import TokenStore
 
 __all__ = [
+    "EMPLOYEE_JOIN",
     "Company",
     "Contact",
     "DeputyAPIError",

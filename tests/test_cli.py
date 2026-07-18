@@ -181,7 +181,9 @@ def test_timesheets_human(
     assert cli.main(["timesheets"]) == 0
     out = capsys.readouterr().out
     assert "My timesheets" in out
-    assert "completed" in out
+    # A completed timesheet renders its window/person but no in-progress flag.
+    assert "Employee #101" in out
+    assert "[on the clock]" not in out
 
 
 def test_who_human(
@@ -197,7 +199,7 @@ def test_who_human(
     _install(monkeypatch, FakeClient(who=who))
     assert cli.main(["who"]) == 0
     out = capsys.readouterr().out
-    assert "Clocked in (1)" in out
+    assert "On the clock (1)" in out
     assert "Rostered now (1)" in out
 
 
@@ -210,7 +212,7 @@ def test_areas_human(
     assert cli.main(["areas"]) == 0
     out = capsys.readouterr().out
     assert "Front of House" in out
-    assert "#11" in out
+    assert "id 11" in out
 
 
 def test_next_by_name_resolves_employee(
@@ -232,7 +234,7 @@ def test_next_none_scheduled(
 ) -> None:
     _install(monkeypatch, FakeClient(next=None))
     assert cli.main(["next"]) == 0
-    assert "No upcoming shift found" in capsys.readouterr().out
+    assert "No upcoming shift scheduled" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- #

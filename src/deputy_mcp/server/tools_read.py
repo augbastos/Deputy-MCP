@@ -24,9 +24,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta, tzinfo
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from fastmcp import FastMCP
 from pydantic import Field
 
 from deputy_mcp.client import DeputyClient, DeputyError
@@ -59,6 +58,9 @@ from deputy_mcp.server.formatting import (
     render_whoami_ical,
     resolve_timezone,
 )
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 __all__ = ["register", "resolve_client_timezone"]
 

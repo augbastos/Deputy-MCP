@@ -12,19 +12,25 @@
 
 The write-tool module is imported lazily inside the ``allow_writes`` branch so a
 read-only install never even imports the mutation code path.
+
+``fastmcp`` itself is imported lazily inside :func:`create_server` (not at module
+scope) so that merely *referencing* the factory — e.g. ``from deputy_mcp.server
+import create_server`` in the client-only CLI's serve path — never pulls the heavy
+``fastmcp`` dependency; it loads only when the server is actually built.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Any, Literal
-
-from fastmcp import FastMCP
+from typing import TYPE_CHECKING, Any, Literal
 
 from deputy_mcp import __version__
 from deputy_mcp.client import DeputyClient
 from deputy_mcp.server import prompts, resources, tools_read
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 __all__ = ["create_server"]
 
@@ -63,6 +69,10 @@ def _instructions(*, allow_writes: bool, mode: Literal["api", "ical"]) -> str:
 
 def create_server() -> FastMCP[dict[str, Any]]:
     """Create and configure the Deputy FastMCP server (built once per process)."""
+    # Import fastmcp here (not at module scope) so that referencing this factory stays
+    # dependency-light for the client-only CLI; the heavy import happens only on build.
+    from fastmcp import FastMCP
+
     client = DeputyClient.from_env()
 
     def get_client() -> DeputyClient:

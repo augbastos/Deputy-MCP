@@ -54,7 +54,8 @@ __all__ = [
 
 #: Association name used to eager-load the assigned employee onto a Roster/Timesheet
 #: (both the QUERY ``join`` sent here and the key the response is read back under, in
-#: :mod:`deputy_mcp.server.formatting` and :mod:`deputy_mcp.cli`). "EmployeeObject" is
+#: :mod:`deputy_mcp.render`). Re-exported from :mod:`deputy_mcp.client` as the client's
+#: public surface so consumers never deep-import this mixin module. "EmployeeObject" is
 #: the documented example name but the join/assoc naming is a smoke-test gap in the API
 #: notes (deputy-api-read.md §1.1) and MUST be confirmed against a live install; keeping
 #: it in one place means a correction propagates to every send/parse site at once.

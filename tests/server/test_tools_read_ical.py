@@ -24,6 +24,9 @@ from . import tool_text
 
 #: A fictional personal calendar feed URL (carries a feed token — treated as a secret).
 FEED_URL = "https://cloud-nine-cafe.eu.deputy.com/ical/feedtoken123.ics"
+#: The secret token segment. A renderer leaking only the token (bare/path-only/encoded)
+#: would slip past a whole-URL check, so tripwires assert the token substring is absent too.
+_FEED_TOKEN = "feedtoken123"
 
 #: A minimal Deputy-style feed with one far-future shift (deterministic for next_shift).
 ICAL_BODY = "\r\n".join(
@@ -95,6 +98,7 @@ async def test_whoami_reports_ical_mode(ical_env: None) -> None:
     assert parsed["mode"] == "ical"
     assert parsed["roster_only"] is True
     assert FEED_URL not in md and FEED_URL not in js
+    assert _FEED_TOKEN not in md and _FEED_TOKEN not in js
 
 
 async def test_calendar_url_tool_never_leaks_the_secret_feed(ical_env: None) -> None:
@@ -106,6 +110,7 @@ async def test_calendar_url_tool_never_leaks_the_secret_feed(ical_env: None) -> 
             await client.call_tool("deputy_get_my_calendar_url", {"response_format": "json"})
         )
     assert FEED_URL not in md and FEED_URL not in js
+    assert _FEED_TOKEN not in md and _FEED_TOKEN not in js
     assert "iCal mode" in md
     parsed = json.loads(js)
     assert parsed["configured"] is True
@@ -130,6 +135,7 @@ async def test_my_roster_renders_feed_shift(ical_env: None, feed: respx.MockRout
         )
     assert "Front of House" in md
     assert FEED_URL not in md and FEED_URL not in js
+    assert _FEED_TOKEN not in md and _FEED_TOKEN not in js
     records = json.loads(js)
     assert isinstance(records, list) and len(records) == 1
 

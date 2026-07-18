@@ -15,13 +15,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
-
-from fastmcp import FastMCP
+from typing import TYPE_CHECKING, Any
 
 from deputy_mcp.client import DeputyClient, DeputyError
 from deputy_mcp.server.formatting import render_roster_list
 from deputy_mcp.server.tools_read import resolve_client_timezone
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 __all__ = ["register"]
 
