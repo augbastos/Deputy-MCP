@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -52,15 +53,24 @@ _VARS = (
     "DEPUTY_TIMEOUT",
     "DEPUTY_MAX_RETRIES",
     "DEPUTY_CALENDAR_URL",
+    "DEPUTY_OAUTH_CLIENT_ID",
+    "DEPUTY_OAUTH_CLIENT_SECRET",
+    "DEPUTY_OAUTH_REDIRECT_PORT",
+    "DEPUTY_TOKEN_STORE",
     "DEPUTY_ENV_FILE",
 )
 
 
 @pytest.fixture
-def ical_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def ical_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """Set a clean iCal-only environment (calendar URL, no API token)."""
     for name in _VARS:
         monkeypatch.delenv(name, raising=False)
+    # Point DEPUTY_ENV_FILE at an empty file so a developer's on-disk .env (which may
+    # carry OAuth client creds) can never leak in and flip the mode to OAuth.
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("DEPUTY_ENV_FILE", str(empty_env))
     monkeypatch.setenv("DEPUTY_CALENDAR_URL", FEED_URL)
     yield
 
