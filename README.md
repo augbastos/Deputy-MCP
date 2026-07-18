@@ -14,7 +14,9 @@ deputy-mcp exposes Deputy's workforce data to a language model through the [Mode
 
 ## Why this exists
 
-Deputy runs the rosters of a lot of shift-based workplaces, but there was no open-source MCP server for it. As of July 2026 the official MCP registry returns no results for Deputy, and the only Deputy MCP connectors on offer are proprietary hosted services — you send your workforce data through someone else's servers to use them. deputy-mcp is the local, auditable alternative: MIT-licensed, runs on your machine, and its only outbound traffic is to your own Deputy instance.
+You can already reach Deputy from an LLM through hosted connector platforms — Zapier, StackOne, viaSocket, Pipedream, SyncHub and others expose a "Deputy MCP" endpoint. They work, but they are the same shape: closed-source, and your workforce data (employee names, schedules, timesheets) flows through a third party's servers, usually behind a paid plan and yet another account.
+
+deputy-mcp is the **open-source, self-hosted** alternative for people who would rather not do that. It runs on your machine, its only outbound traffic is to your own Deputy install, the code is MIT-licensed and auditable, and it needs no account anywhere but Deputy. As of July 2026 it is the only open-source, installable Deputy MCP server I'm aware of — the official MCP registry, PyPI and npm return nothing else — but the honest pitch is not "first", it's **local and private instead of hosted and proprietary**. If a managed platform suits you better, use one of those; if you want the auditable, data-stays-home option, this is it.
 
 ---
 

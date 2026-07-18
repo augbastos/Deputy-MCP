@@ -19,21 +19,42 @@
       "environmentVariables": [
         {
           "name": "DEPUTY_API_TOKEN",
-          "description": "Deputy permanent access token (Business settings -> Integrations -> API access).",
-          "isRequired": true,
+          "description": "Auth mode A (full access): Deputy permanent token (needs an admin access level). Pair with DEPUTY_BASE_URL. Provide ONE of the three auth modes: A (token), B (OAuth: run 'deputy-mcp login' with the OAuth vars), or C (DEPUTY_CALENDAR_URL, roster-only).",
+          "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "DEPUTY_BASE_URL",
-          "description": "Your Deputy install URL, e.g. https://your-company.eu.deputy.com",
-          "isRequired": true,
+          "description": "Auth mode A only: your Deputy install URL, e.g. https://your-company.eu.deputy.com. Not needed for OAuth or iCal mode.",
+          "isRequired": false,
           "isSecret": false,
           "format": "string"
         },
         {
+          "name": "DEPUTY_OAUTH_CLIENT_ID",
+          "description": "Auth mode B (OAuth, no admin needed): client id of an app registered at once.deputy.com/my/oauth_clients (redirect http://localhost:8823/callback). Then run 'deputy-mcp login'.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "DEPUTY_OAUTH_CLIENT_SECRET",
+          "description": "Auth mode B (OAuth): client secret of the registered OAuth app. Used only to mint/refresh your access token via 'deputy-mcp login'.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "DEPUTY_CALENDAR_URL",
+          "description": "Auth mode C (iCal, roster-only, no API token): your personal Deputy calendar feed URL (My Schedule -> subscribe/export). Carries a feed token, so treat as a secret.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
           "name": "DEPUTY_ALLOW_WRITES",
-          "description": "Set to true to enable the opt-in write tools. Read-only by default.",
+          "description": "Set to true to enable the opt-in write tools (auth mode A/B only). Read-only by default.",
           "isRequired": false,
           "isSecret": false,
           "format": "string"
