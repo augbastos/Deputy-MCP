@@ -10,6 +10,7 @@ never be accidentally logged.
 
 from __future__ import annotations
 
+import json
 import os
 import warnings
 from collections.abc import Mapping
@@ -57,6 +58,34 @@ def _normalize_base_url(raw: str) -> str:
     return url.rstrip("/")
 
 
+#: Default OAuth loopback redirect port (mirrors ``oauth.DEFAULT_REDIRECT_PORT``;
+#: duplicated here to avoid importing the oauth module, which imports this one).
+_DEFAULT_REDIRECT_PORT = 8823
+
+
+def _default_token_store_path() -> Path:
+    """Default location for the OAuth token store (``~/.deputy-mcp/token.json``)."""
+    return Path.home() / ".deputy-mcp" / "token.json"
+
+
+def _token_store_has_refresh(path: Path) -> bool:
+    """Return whether ``path`` holds a usable OAuth token store (has a refresh token).
+
+    Reads the JSON file directly (never importing the oauth module, to avoid a
+    circular import) and never logs or returns any value from it. Any error —
+    missing file, bad JSON, wrong shape — is swallowed to ``False`` so a broken
+    store simply means "not logged in" rather than a config crash.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    refresh = data.get("refresh_token")
+    return isinstance(refresh, str) and bool(refresh)
+
+
 class DeputyConfig(BaseModel):
     """Validated runtime configuration.
 
@@ -97,6 +126,10 @@ class DeputyConfig(BaseModel):
     allow_custom_host: bool = False
     base_url: str | None = None
     calendar_url: SecretStr | None = None
+    oauth_client_id: str | None = None
+    oauth_client_secret: SecretStr | None = None
+    token_store_path: Path = Field(default_factory=_default_token_store_path)
+    redirect_port: int = Field(default=_DEFAULT_REDIRECT_PORT, gt=0)
     allow_writes: bool = False
     cache_ttl: int = Field(default=30, ge=0)
     timeout: float = Field(default=30.0, gt=0)
@@ -134,28 +167,59 @@ class DeputyConfig(BaseModel):
         """Fail closed unless a usable credential set is present (defence in depth).
 
         :meth:`from_env` already gives friendlier messages, but constructing the model
-        directly must never yield an unusable config: at least one of ``api_token`` or
-        ``calendar_url`` is required, and api mode additionally needs ``base_url``.
+        directly must never yield an unusable config: at least one of the three paths
+        (static token, OAuth, or iCal feed) must be usable, and static mode additionally
+        needs ``base_url`` (OAuth's base URL comes from the stored token endpoint).
         """
-        if self.api_token is None and self.calendar_url is None:
+        if self.api_token is None and self.calendar_url is None and not self._oauth_available():
             raise ValueError(
-                "no Deputy credentials: set DEPUTY_API_TOKEN (api mode) or "
-                "DEPUTY_CALENDAR_URL (iCal mode)"
+                "no Deputy credentials: set DEPUTY_API_TOKEN (api mode), run "
+                "'deputy-mcp login' with DEPUTY_OAUTH_CLIENT_ID/DEPUTY_OAUTH_CLIENT_SECRET "
+                "(OAuth mode), or set DEPUTY_CALENDAR_URL (iCal mode)"
             )
         if self.api_token is not None and self.base_url is None:
             raise ValueError("DEPUTY_BASE_URL is required when DEPUTY_API_TOKEN is set (api mode)")
         return self
 
+    def _oauth_available(self) -> bool:
+        """Whether the OAuth path is usable: creds to run ``login`` or a stored token.
+
+        True when both OAuth client credentials are present (so ``deputy-mcp login``
+        can run) OR a token store with a refresh token already exists. Reads the store
+        file but never its secret values (see :func:`_token_store_has_refresh`).
+        """
+        if self.oauth_client_id and self.oauth_client_secret is not None:
+            return True
+        return _token_store_has_refresh(self.token_store_path)
+
+    @property
+    def auth_kind(self) -> Literal["static", "oauth", "ical"]:
+        """The resolved credential path (internal; drives client wiring).
+
+        Precedence is ``static`` > ``oauth`` > ``ical`` (defence in depth):
+
+        * ``static`` — a permanent ``DEPUTY_API_TOKEN`` (+ ``DEPUTY_BASE_URL``) is set.
+        * ``oauth`` — no static token, but OAuth is usable (client creds present so
+          ``login`` can run, or a stored refresh token exists).
+        * ``ical`` — only a personal ``DEPUTY_CALENDAR_URL`` feed.
+
+        An after-validator guarantees one of the three is usable, so this is exhaustive.
+        """
+        if self.api_token is not None:
+            return "static"
+        if self._oauth_available():
+            return "oauth"
+        return "ical"
+
     @property
     def mode(self) -> Literal["api", "ical"]:
-        """The resolved operating mode.
+        """The resolved public operating mode.
 
-        ``api`` whenever an API token is present (it is primary even if a calendar URL is
-        also set, so the full tool surface stays available); otherwise ``ical``. An
-        after-validator guarantees at least one credential exists, so these two are
-        exhaustive.
+        ``api`` whenever the full API surface is available — that is both the static-token
+        path and the OAuth path (an OAuth access token hits the same ``/api/v1`` surface);
+        otherwise ``ical``. See :attr:`auth_kind` for the finer-grained internal split.
         """
-        return "api" if self.api_token is not None else "ical"
+        return "ical" if self.auth_kind == "ical" else "api"
 
     @property
     def api_url(self) -> str:
@@ -192,6 +256,19 @@ class DeputyConfig(BaseModel):
             )
         return self.calendar_url.get_secret_value()
 
+    def oauth_client_secret_value(self) -> str:
+        """Return the raw OAuth client secret (OAuth mode). Never log or print it."""
+        if self.oauth_client_secret is None:
+            raise DeputyConfigError(
+                "No DEPUTY_OAUTH_CLIENT_SECRET is configured.",
+                hint=(
+                    "Register an app at https://once.deputy.com/my/oauth_clients and set "
+                    "DEPUTY_OAUTH_CLIENT_ID and DEPUTY_OAUTH_CLIENT_SECRET, then run "
+                    "'deputy-mcp login'."
+                ),
+            )
+        return self.oauth_client_secret.get_secret_value()
+
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> DeputyConfig:
         """Build a config from environment variables, failing closed.
@@ -212,20 +289,34 @@ class DeputyConfig(BaseModel):
 
         token = (env.get("DEPUTY_API_TOKEN") or "").strip()
         calendar_url = (env.get("DEPUTY_CALENDAR_URL") or "").strip()
+        oauth_client_id = (env.get("DEPUTY_OAUTH_CLIENT_ID") or "").strip()
+        oauth_client_secret = (env.get("DEPUTY_OAUTH_CLIENT_SECRET") or "").strip()
+        token_store_raw = (env.get("DEPUTY_TOKEN_STORE") or "").strip()
+        token_store_path = Path(token_store_raw) if token_store_raw else _default_token_store_path()
+        redirect_port = _parse_int(env, "DEPUTY_OAUTH_REDIRECT_PORT", _DEFAULT_REDIRECT_PORT)
 
-        # Fail closed naming BOTH legitimate paths: either an API token (full client) or a
-        # personal iCal feed URL (roster-only, no token needed). An ordinary employee who
-        # cannot mint a token still has a valid path via DEPUTY_CALENDAR_URL.
-        if not token and not calendar_url:
+        # OAuth is a usable path when both client creds are present (so 'deputy-mcp login'
+        # can run) or a stored refresh token already exists (never read for its value).
+        oauth_present = bool(oauth_client_id and oauth_client_secret) or _token_store_has_refresh(
+            token_store_path
+        )
+
+        # Fail closed naming ALL THREE legitimate paths: a permanent API token (full
+        # client), OAuth login (full client, no admin needed), or a personal iCal feed URL
+        # (roster-only, no token needed).
+        if not token and not calendar_url and not oauth_present:
             raise DeputyConfigError(
-                "No Deputy credentials found: set DEPUTY_API_TOKEN or DEPUTY_CALENDAR_URL.",
+                "No Deputy credentials found: set DEPUTY_API_TOKEN, run 'deputy-mcp login' "
+                "(DEPUTY_OAUTH_CLIENT_ID/DEPUTY_OAUTH_CLIENT_SECRET), or set DEPUTY_CALENDAR_URL.",
                 hint=(
-                    "Full access (all tools): create a token in Deputy under Business "
-                    "settings -> Integrations -> API access (New OAuth Client -> Get an "
-                    "Access Token; shown once) and set DEPUTY_API_TOKEN plus DEPUTY_BASE_URL. "
-                    "No API token (ordinary employee)? Open Deputy -> My Schedule -> "
-                    "subscribe/export calendar, copy the iCal link and set it as "
-                    "DEPUTY_CALENDAR_URL for roster-only, read-only access."
+                    "Full access, admin token: create one in Deputy under Business settings "
+                    "-> Integrations -> API access and set DEPUTY_API_TOKEN plus DEPUTY_BASE_URL. "
+                    "Full access, no admin: register an app at "
+                    "https://once.deputy.com/my/oauth_clients (redirect "
+                    "http://localhost:8823/callback), set DEPUTY_OAUTH_CLIENT_ID and "
+                    "DEPUTY_OAUTH_CLIENT_SECRET, then run 'deputy-mcp login'. Roster-only: open "
+                    "Deputy -> My Schedule -> subscribe/export calendar, copy the iCal link and "
+                    "set it as DEPUTY_CALENDAR_URL for read-only access to your own roster."
                 ),
             )
 
@@ -253,6 +344,10 @@ class DeputyConfig(BaseModel):
                 allow_custom_host=allow_custom_host,
                 base_url=base_url or None,
                 calendar_url=SecretStr(calendar_url) if calendar_url else None,
+                oauth_client_id=oauth_client_id or None,
+                oauth_client_secret=SecretStr(oauth_client_secret) if oauth_client_secret else None,
+                token_store_path=token_store_path,
+                redirect_port=redirect_port,
                 allow_writes=allow_writes,
                 cache_ttl=cache_ttl,
                 timeout=timeout,

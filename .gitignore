@@ -16,6 +16,14 @@ htmlcov/
 .env.*
 !.env.example
 
+# OAuth token store — live access/refresh tokens, never commit
+.deputy-mcp/
+token.json
+*.token.json
+
+# Local scratch / demo scripts — not part of the package
+scratchpad/
+
 # Editors / OS
 .idea/
 .vscode/
