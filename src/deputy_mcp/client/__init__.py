@@ -45,6 +45,7 @@ from deputy_mcp.client.models import (
 from deputy_mcp.client.reads import EMPLOYEE_JOIN, ReadsMixin
 from deputy_mcp.client.writes import WritesMixin
 from deputy_mcp.config import DeputyConfig
+from deputy_mcp.oauth import TokenStore
 
 __all__ = [
     "Company",
@@ -102,16 +103,34 @@ class DeputyClient(ReadsMixin, WritesMixin):
     def __init__(self, config: DeputyConfig) -> None:
         """Build a client for one install from validated configuration.
 
-        In api mode the authenticated HTTP transport is created eagerly. In iCal mode no
-        transport (and no token) exists; an :class:`IcalRosterSource` is held instead and
-        ``_http`` raises on use.
+        The credential path (:attr:`DeputyConfig.auth_kind`) decides the wiring:
+
+        * **static** — the authenticated HTTP transport is created eagerly from the
+          permanent token and base URL.
+        * **oauth** — the token store is loaded; if it holds tokens the transport is
+          built from them (with the store, so it can refresh + persist on expiry). If
+          no store exists yet the transport is left unbuilt and ``_http`` raises a
+          "run deputy-mcp login first" error on use — a tool call fails cleanly rather
+          than crashing at construction.
+        * **ical** — no transport (and no token) exists; an :class:`IcalRosterSource`
+          is held instead and ``_http`` raises the iCal-only error on use.
         """
         self._config = config
         self._own_employee_id: int | None = None
         self._transport: DeputyHTTP | None = None
         self._ical_source: IcalRosterSource | None = None
-        if config.mode == "api":
+        self._needs_login = False
+        if config.auth_kind == "static":
             self._http = DeputyHTTP(config)
+        elif config.auth_kind == "oauth":
+            store = TokenStore(config.token_store_path)
+            tokens = store.load()
+            if tokens is None:
+                # OAuth creds are set but no token has been minted yet. Defer the
+                # failure to first use so constructing the client never crashes.
+                self._needs_login = True
+            else:
+                self._http = DeputyHTTP(config, oauth_tokens=tokens, token_store=store)
         else:
             self._ical_source = IcalRosterSource(
                 config.calendar_url_value(),
@@ -145,12 +164,25 @@ class DeputyClient(ReadsMixin, WritesMixin):
         guard in each method.
         """
         if self._transport is None:
+            if self._needs_login:
+                raise self._login_required_error()
             raise self._ical_only_error()
         return self._transport
 
     @_http.setter
     def _http(self, value: DeputyHTTP) -> None:
         self._transport = value
+
+    def _login_required_error(self) -> DeputyError:
+        """The error raised when the API is used in OAuth mode before ``login`` ran."""
+        return DeputyError(
+            "not signed in to Deputy: no OAuth token found — run 'deputy-mcp login' first",
+            hint=(
+                "Register an app at https://once.deputy.com/my/oauth_clients (redirect "
+                "http://localhost:8823/callback), set DEPUTY_OAUTH_CLIENT_ID and "
+                "DEPUTY_OAUTH_CLIENT_SECRET, then run 'deputy-mcp login'."
+            ),
+        )
 
     def _ical_only_error(self) -> DeputyError:
         """The error raised when an API-only capability is used in iCal mode."""

@@ -11,6 +11,14 @@ install's ``/api/v1`` base and the ``Authorization: Bearer`` header. It adds:
 
 The token is only ever placed in the request header — it is never logged, put
 in an exception, or included in a cache key.
+
+In OAuth mode the transport is instead bound to a stored ``access_token`` and the
+install ``base_url`` recovered from the token store. When that access token is (or
+is about to be) expired, the transport transparently mints a fresh one from the
+refresh token, persists it, updates the ``Authorization`` header and retries the
+request once. Static-token mode never enters that path, so its behaviour is
+unchanged. Neither the access token, refresh token nor client secret is ever
+logged or placed in an exception.
 """
 
 from __future__ import annotations
@@ -21,7 +29,7 @@ import json
 import random
 import time
 from types import TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -35,6 +43,9 @@ from deputy_mcp.client.errors import (
     DeputyRegionError,
 )
 from deputy_mcp.config import DeputyConfig
+
+if TYPE_CHECKING:
+    from deputy_mcp.oauth import OAuthTokens, TokenStore
 
 #: HTTP statuses that are safe to retry (throttling + transient upstream).
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
@@ -60,12 +71,36 @@ class DeputyHTTP:
     #: without bound (many distinct QUERY bodies over a session).
     MAX_CACHE_ENTRIES = 512
 
-    def __init__(self, config: DeputyConfig) -> None:
+    def __init__(
+        self,
+        config: DeputyConfig,
+        *,
+        oauth_tokens: OAuthTokens | None = None,
+        token_store: TokenStore | None = None,
+    ) -> None:
+        """Build a transport for one install.
+
+        In static-token mode (``oauth_tokens is None``) the base URL and bearer token
+        come straight from ``config`` — byte-for-behaviour identical to before OAuth
+        mode existed. In OAuth mode the base URL and bearer come from the stored
+        ``oauth_tokens`` instead, and the transport can refresh + persist them via
+        ``token_store`` on expiry.
+        """
         self._config = config
+        self._oauth_tokens = oauth_tokens
+        self._token_store = token_store
+        # Serialize refresh so concurrent 401s mint (and persist) only one new token.
+        self._refresh_lock = asyncio.Lock()
+        if oauth_tokens is not None:
+            base_url = f"{oauth_tokens.base_url}/api/v1"
+            bearer = oauth_tokens.access_token
+        else:
+            base_url = config.api_url
+            bearer = config.token()
         self._client = httpx.AsyncClient(
-            base_url=config.api_url,
+            base_url=base_url,
             headers={
-                "Authorization": f"Bearer {config.token()}",
+                "Authorization": f"Bearer {bearer}",
                 "Accept": "application/json",
                 "User-Agent": "deputy-mcp",
             },
@@ -115,6 +150,38 @@ class DeputyHTTP:
             if hit is not _MISS:
                 return hit
 
+        # OAuth only: pre-emptively refresh a token that is expired (or within the
+        # skew window) so we do not spend a round-trip earning a predictable 401.
+        tokens = self._oauth_tokens
+        if tokens is not None and tokens.is_expired():
+            await self._refresh_tokens(tokens.access_token)
+
+        try:
+            return await self._send_with_retries(method, path, json_body, params, retryable, key)
+        except DeputyAuthError:
+            # Static mode: a 401 is a genuine bad/expired token — surface it as-is.
+            current = self._oauth_tokens
+            if current is None:
+                raise
+            # OAuth: the access token may have expired mid-flight. Refresh once and
+            # replay the request exactly once. A second 401 propagates (no loop).
+            await self._refresh_tokens(current.access_token)
+            return await self._send_with_retries(method, path, json_body, params, retryable, key)
+
+    async def _send_with_retries(
+        self,
+        method: str,
+        path: str,
+        json_body: Any | None,
+        params: dict[str, Any] | None,
+        retryable: bool,
+        key: str | None,
+    ) -> Any:
+        """Send one logical request, retrying throttling/transient transport errors.
+
+        This is the unchanged static-mode request loop, extracted so the OAuth
+        refresh-and-replay wrapper in :meth:`request` can invoke it twice at most.
+        """
         attempt = 0
         while True:
             try:
@@ -153,6 +220,50 @@ class DeputyHTTP:
                 continue
 
             raise _map_error(response)
+
+    async def _refresh_tokens(self, stale_access_token: str) -> None:
+        """Mint, persist and apply a fresh OAuth access token (OAuth mode only).
+
+        Serialized by ``_refresh_lock``: if another task already rotated the token
+        since ``stale_access_token`` was captured, this is a no-op so a single 401
+        storm does not burn several refresh-token round-trips. On failure a
+        :class:`DeputyAuthError` is raised pointing the user at ``deputy-mcp login``;
+        no token or secret is ever included in the message.
+        """
+        from deputy_mcp import oauth
+
+        async with self._refresh_lock:
+            current = self._oauth_tokens
+            if current is None or current.access_token != stale_access_token:
+                # Not OAuth, or a concurrent refresh already replaced the token.
+                return
+            client_id = (self._config.oauth_client_id or "").strip()
+            if not client_id or self._config.oauth_client_secret is None:
+                raise DeputyAuthError(
+                    "Cannot refresh the Deputy OAuth token: client credentials are missing.",
+                    hint=(
+                        "Set DEPUTY_OAUTH_CLIENT_ID and DEPUTY_OAUTH_CLIENT_SECRET, then "
+                        "run 'deputy-mcp login' again."
+                    ),
+                )
+            client_secret = self._config.oauth_client_secret_value()
+            try:
+                async with httpx.AsyncClient(timeout=self._config.timeout) as http:
+                    new_tokens = await oauth.refresh(
+                        http, client_id, client_secret, current.refresh_token
+                    )
+            except DeputyAuthError:
+                raise
+            except DeputyError as exc:
+                # A non-auth failure (network/shape): still actionable via re-login.
+                raise DeputyAuthError(
+                    f"Could not refresh the Deputy OAuth token: {exc.message}",
+                    hint="Run 'deputy-mcp login' again.",
+                ) from exc
+            self._oauth_tokens = new_tokens
+            self._client.headers["Authorization"] = f"Bearer {new_tokens.access_token}"
+            if self._token_store is not None:
+                self._token_store.save(new_tokens)
 
     def invalidate(self) -> None:
         """Clear the entire read cache (called after every write)."""

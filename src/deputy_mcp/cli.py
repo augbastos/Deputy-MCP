@@ -10,6 +10,9 @@ Two roles share one entry point:
   ``areas``, ``next``) reuse :class:`~deputy_mcp.client.DeputyClient` directly via
   :func:`asyncio.run`. ``--json`` emits the raw API objects; otherwise a compact
   human rendering is printed.
+* ``login`` runs the OAuth 2.0 loopback flow (for an employee who cannot mint a
+  permanent API token), persisting the resulting access/refresh tokens to the
+  token store; ``logout`` deletes that store. Neither ever prints a token value.
 
 Every :class:`~deputy_mcp.client.errors.DeputyError` is turned into a single
 actionable stderr line and exit code 1 — callers never see a traceback.
@@ -26,17 +29,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Sequence
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from deputy_mcp.client import DeputyClient
-from deputy_mcp.client.errors import DeputyError, DeputyNotFoundError
+from deputy_mcp.client.errors import DeputyConfigError, DeputyError, DeputyNotFoundError
 from deputy_mcp.client.models import Roster, Timesheet
 from deputy_mcp.client.reads import EMPLOYEE_JOIN
+from deputy_mcp.config import DeputyConfig
 
 __all__ = ["main"]
 
@@ -112,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME_OR_ID",
         help="Employee name or id (defaults to you).",
     )
+
+    sub.add_parser(
+        "login",
+        help="Sign in via OAuth (browser) and store an access token for API use.",
+    )
+    sub.add_parser("logout", help="Delete the stored OAuth token (sign out).")
     return parser
 
 
@@ -329,6 +341,77 @@ async def _run_command(command: str, args: argparse.Namespace) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# OAuth login / logout
+# --------------------------------------------------------------------------- #
+def _print_register_steps(port: int) -> None:
+    """Print the exact steps to register an OAuth app (no secret is ever echoed)."""
+    redirect = f"http://localhost:{port}/callback"
+    print("deputy-mcp login needs a registered Deputy OAuth app.")
+    print("To set one up (no admin access required):")
+    print("  1. Open https://once.deputy.com/my/oauth_clients and create an app.")
+    print(f"  2. Set its redirect URI to exactly: {redirect}")
+    print("  3. Copy the client id and client secret, then set these env vars:")
+    print("       DEPUTY_OAUTH_CLIENT_ID=<your client id>")
+    print("       DEPUTY_OAUTH_CLIENT_SECRET=<your client secret>")
+    print("  4. Run 'deputy-mcp login' again.")
+
+
+def _cmd_login() -> int:
+    """Run the OAuth loopback flow and persist the tokens; never print a token."""
+    from deputy_mcp import oauth
+
+    try:
+        config = DeputyConfig.from_env()
+    except DeputyConfigError:
+        # Nothing usable is configured at all — guide the user to register an app.
+        _print_register_steps(oauth.DEFAULT_REDIRECT_PORT)
+        return 1
+
+    if not (config.oauth_client_id and config.oauth_client_secret is not None):
+        _print_register_steps(config.redirect_port)
+        return 1
+
+    try:
+        tokens = asyncio.run(oauth.run_login_flow(config))
+    except DeputyError as exc:
+        _fail(exc)
+        return 1
+
+    store = oauth.TokenStore(config.token_store_path)
+    store.save(tokens)
+    expires = datetime.fromtimestamp(tokens.expires_at, tz=UTC)
+    print(
+        f"Logged in — API base {tokens.base_url}, token stored at {store.path}, "
+        f"access token expires {expires:%Y-%m-%d %H:%M UTC}"
+    )
+    return 0
+
+
+def _token_store_path() -> Path:
+    """Resolve the token-store path, even when no credentials are configured."""
+    try:
+        return DeputyConfig.from_env().token_store_path
+    except DeputyConfigError:
+        raw = (os.environ.get("DEPUTY_TOKEN_STORE") or "").strip()
+        if raw:
+            return Path(raw)
+        return Path.home() / ".deputy-mcp" / "token.json"
+
+
+def _cmd_logout() -> int:
+    """Delete the stored OAuth token, if any."""
+    from deputy_mcp import oauth
+
+    path = _token_store_path()
+    store = oauth.TokenStore(path)
+    if store.delete():
+        print(f"Logged out — removed token store at {path}.")
+    else:
+        print(f"No Deputy token store to remove at {path}.")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Serve mode
 # --------------------------------------------------------------------------- #
 def _serve() -> int:
@@ -362,6 +445,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if command == "serve":
         return _serve()
+    if command == "login":
+        return _cmd_login()
+    if command == "logout":
+        return _cmd_logout()
 
     try:
         asyncio.run(_run_command(command, args))
