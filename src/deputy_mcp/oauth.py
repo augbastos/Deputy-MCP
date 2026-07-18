@@ -34,13 +34,13 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from deputy_mcp.client.errors import (
+from deputy_mcp._util import DEFAULT_REDIRECT_PORT, normalize_base_url
+from deputy_mcp.errors import (
     DeputyAPIError,
     DeputyAuthError,
     DeputyConfigError,
     DeputyError,
 )
-from deputy_mcp.config import _normalize_base_url
 
 if TYPE_CHECKING:
     from deputy_mcp.config import DeputyConfig
@@ -53,8 +53,9 @@ AUTHORIZE_URL = "https://once.deputy.com/my/oauth/login"
 TOKEN_URL = "https://once.deputy.com/my/oauth/access_token"
 #: Scope requesting a long-life refresh token alongside the access token.
 SCOPE = "longlife_refresh_token"
-#: Default loopback port for the redirect URI (overridable per install).
-DEFAULT_REDIRECT_PORT = 8823
+#: Default loopback port for the redirect URI (overridable per install). Re-exported
+#: from the leaf :mod:`deputy_mcp._util` so the constant has a single source of truth
+#: shared with :mod:`deputy_mcp.config`.
 
 #: Fallback access-token lifetime (seconds) when the response omits ``expires_in``.
 #: Token lifetime is a documented GAP; assume a conservative hour so the client
@@ -304,7 +305,7 @@ def _tokens_from_response(
             "Deputy's OAuth response did not include the install endpoint.",
             hint="The token response shape may have changed. " + _LOGIN_HINT,
         )
-    base_url = _normalize_base_url(endpoint)
+    base_url = normalize_base_url(endpoint)
 
     return OAuthTokens(
         access_token=access,

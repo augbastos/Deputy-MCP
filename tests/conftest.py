@@ -3,8 +3,8 @@
 Everything here is FICTIONAL: the install ``cloud-nine-cafe.eu.deputy.com`` and the
 people Alex Rivera, Sam O'Brien and Jo Murphy do not exist, and ``TEST_TOKEN`` is a
 placeholder string, not a real credential. The payload factories reproduce the field
-shapes documented in ``deputy-api-read.md`` so client/server tests can mock Deputy's
-Resource API responses without hand-writing dicts.
+shapes of Deputy's Resource API so client/server tests can mock its responses without
+hand-writing dicts.
 
 Fixtures provided for the whole suite:
 
@@ -27,13 +27,7 @@ import pytest
 import respx
 from pydantic import SecretStr
 
-# NOTE: importing ``deputy_mcp.config`` before ``deputy_mcp.client`` triggers a circular
-# import in the source (config -> client.errors -> client/__init__ -> http -> config).
-# That is a pre-existing structural bug in the client/config modules, not in the tests;
-# importing the client package first here breaks the cycle so the whole suite can load.
-# See the W4 test report deviations — the real fix belongs in the source.
-import deputy_mcp.client  # noqa: F401  (side-effect import: ordering guard)
-from deputy_mcp.config import DeputyConfig
+from deputy_mcp.config import DEPUTY_ENV_VARS, DeputyConfig
 
 # -- fictional install constants (shared by every test) ----------------------
 
@@ -56,25 +50,17 @@ _DEFAULT_ENV: dict[str, str] = {
     "DEPUTY_MAX_RETRIES": "3",
 }
 
-#: Every DEPUTY_* variable the config reads (cleared before each env fixture).
-_DEPUTY_VARS: tuple[str, ...] = (
-    "DEPUTY_API_TOKEN",
-    "DEPUTY_BASE_URL",
-    "DEPUTY_ALLOW_WRITES",
-    "DEPUTY_ALLOW_CUSTOM_HOST",
-    "DEPUTY_CALENDAR_URL",
-    "DEPUTY_OAUTH_CLIENT_ID",
-    "DEPUTY_OAUTH_CLIENT_SECRET",
-    "DEPUTY_OAUTH_REDIRECT_PORT",
-    "DEPUTY_CACHE_TTL",
-    "DEPUTY_TIMEOUT",
-    "DEPUTY_MAX_RETRIES",
-)
-
 #: Env-file / token-store pointers. The autouse isolation fixture pins these at hermetic
-#: temp paths and, unlike the credential vars above, they are NOT cleared by the per-test
+#: temp paths and, unlike the credential vars below, they are NOT cleared by the per-test
 #: env fixtures — so an ambient repo ``.env`` or a real ``~/.deputy-mcp`` never leaks in.
 _ISOLATION_VARS: tuple[str, ...] = ("DEPUTY_ENV_FILE", "DEPUTY_TOKEN_STORE")
+
+#: Every DEPUTY_* variable the config reads, minus the isolation pointers (cleared before
+#: each env fixture). Derived from the canonical :data:`deputy_mcp.config.DEPUTY_ENV_VARS`
+#: so this list can never drift as variables are added.
+_DEPUTY_VARS: tuple[str, ...] = tuple(
+    name for name in DEPUTY_ENV_VARS if name not in _ISOLATION_VARS
+)
 
 
 @pytest.fixture(autouse=True)

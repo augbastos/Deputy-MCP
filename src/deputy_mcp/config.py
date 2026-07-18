@@ -1,10 +1,18 @@
 """Environment-driven configuration for the Deputy client and MCP server.
 
 Configuration is loaded once at startup from ``DEPUTY_*`` environment variables
-via :meth:`DeputyConfig.from_env`. Loading fails closed: a missing token or base
-URL raises :class:`DeputyConfigError` with a message that says exactly which
-variable to set and where to find its value. The API token is stored as a
-:class:`pydantic.SecretStr` so it is redacted from any ``repr``/``str`` and can
+via :meth:`DeputyConfig.from_env`. Loading fails closed: without a usable credential
+set it raises :class:`DeputyConfigError` naming every path to fix it. There are THREE
+credential paths, resolved with precedence ``static > oauth > ical`` (see
+:attr:`DeputyConfig.auth_kind`):
+
+* **static** -- a permanent ``DEPUTY_API_TOKEN`` (+ ``DEPUTY_BASE_URL``);
+* **oauth** -- ``DEPUTY_OAUTH_CLIENT_ID`` + ``DEPUTY_OAUTH_CLIENT_SECRET`` (minted via
+  ``deputy-mcp login``), which resolve to the same public ``api`` mode;
+* **ical** -- only a personal ``DEPUTY_CALENDAR_URL`` feed (roster-only, no token).
+
+The API token, calendar URL and OAuth client secret are stored as
+:class:`pydantic.SecretStr` so they are redacted from any ``repr``/``str`` and can
 never be accidentally logged.
 """
 
@@ -29,37 +37,42 @@ from pydantic import (
     model_validator,
 )
 
-from deputy_mcp.client.errors import DeputyConfigError
+from deputy_mcp._util import DEFAULT_REDIRECT_PORT, normalize_base_url
+from deputy_mcp.errors import DeputyConfigError
+
+#: Canonical tuple of every ``DEPUTY_*`` environment variable this module reads.
+#: Single source of truth for the env contract: the test suite derives its variable
+#: lists from this (see ``tests/conftest.py`` and ``tests/test_cli_ical.py``) instead
+#: of hand-maintaining parallel copies that silently drift as variables are added.
+DEPUTY_ENV_VARS: tuple[str, ...] = (
+    "DEPUTY_API_TOKEN",
+    "DEPUTY_BASE_URL",
+    "DEPUTY_CALENDAR_URL",
+    "DEPUTY_OAUTH_CLIENT_ID",
+    "DEPUTY_OAUTH_CLIENT_SECRET",
+    "DEPUTY_TOKEN_STORE",
+    "DEPUTY_OAUTH_REDIRECT_PORT",
+    "DEPUTY_ALLOW_WRITES",
+    "DEPUTY_ALLOW_CUSTOM_HOST",
+    "DEPUTY_CACHE_TTL",
+    "DEPUTY_TIMEOUT",
+    "DEPUTY_MAX_RETRIES",
+    "DEPUTY_ENV_FILE",
+)
 
 #: Env values (case-insensitive) that enable a boolean flag.
 _TRUTHY = frozenset({"true", "1", "yes"})
 
-#: API path suffixes stripped from a user-supplied base URL during normalization.
-_API_SUFFIXES = ("/api/v1", "/api/v2")
-
-
-def _normalize_base_url(raw: str) -> str:
-    """Normalize a Deputy base URL to the bare install origin.
-
-    Accepts the value with or without a scheme, trailing slash, or ``/api/v1``
-    (``/api/v2``) suffix and returns just ``https://{install}.{geo}.deputy.com``.
-    A missing scheme defaults to ``https``.
-    """
-    url = raw.strip()
-    if "://" not in url:
-        url = f"https://{url}"
-    url = url.rstrip("/")
-    lowered = url.lower()
-    for suffix in _API_SUFFIXES:
-        if lowered.endswith(suffix):
-            url = url[: -len(suffix)]
-            break
-    return url.rstrip("/")
-
-
-#: Default OAuth loopback redirect port (mirrors ``oauth.DEFAULT_REDIRECT_PORT``;
-#: duplicated here to avoid importing the oauth module, which imports this one).
-_DEFAULT_REDIRECT_PORT = 8823
+#: Security-sensitive keys that must NOT be honored from an AUTO-loaded cwd ``.env``.
+#: A stdio server's working directory is chosen by the (host-controlled) MCP host, so an
+#: untrusted directory's ``.env`` must not be able to flip writes on, widen the host
+#: allowlist, or redirect the OAuth token store. These are accepted only from the real
+#: process environment or from an EXPLICITLY named ``DEPUTY_ENV_FILE`` (a trusted, deliberate
+#: choice). Credential-loading convenience keys (token, base/calendar URL, OAuth creds) are
+#: unaffected, so an ordinary cwd ``.env`` setup still works.
+_CWD_ENV_DENYLIST = frozenset(
+    {"DEPUTY_ALLOW_WRITES", "DEPUTY_ALLOW_CUSTOM_HOST", "DEPUTY_TOKEN_STORE"}
+)
 
 
 def _default_token_store_path() -> Path:
@@ -70,16 +83,20 @@ def _default_token_store_path() -> Path:
 class DeputyConfig(BaseModel):
     """Validated runtime configuration.
 
-    Two mutually-supportive credentials decide the operating :attr:`mode`:
+    Three credential paths decide the operating :attr:`mode` (see :attr:`auth_kind`
+    for the internal ``static``/``oauth``/``ical`` split):
 
-    * ``api_token`` (+ ``base_url``) → **api** mode: the full authenticated client, every
-      tool. Behaviour identical to before iCal mode existed.
+    * ``api_token`` (+ ``base_url``) → **static** api mode: the full authenticated client,
+      every tool. Behaviour identical to before iCal/OAuth modes existed.
+    * ``oauth_client_id`` + ``oauth_client_secret`` → **oauth** api mode: the same full
+      surface, minted via ``deputy-mcp login`` (no admin token needed). ``base_url`` comes
+      from the stored token endpoint rather than the environment.
     * ``calendar_url`` only → **ical** mode: the caller has no API token (an ordinary
       employee cannot mint one) but supplies their personal Deputy iCal feed, which needs
       no token and exposes only their own roster. ``base_url`` is not required here.
 
-    At least one of the two must be present; :meth:`from_env` (and the after-validator)
-    fail closed naming both paths when neither is.
+    At least one of the three must be usable; :meth:`from_env` (and the after-validator)
+    fail closed naming every path when none is.
 
     Attributes:
         api_token: Permanent token or OAuth access token (redacted in output). ``None`` in
@@ -110,7 +127,7 @@ class DeputyConfig(BaseModel):
     oauth_client_id: str | None = None
     oauth_client_secret: SecretStr | None = None
     token_store_path: Path = Field(default_factory=_default_token_store_path)
-    redirect_port: int = Field(default=_DEFAULT_REDIRECT_PORT, gt=0)
+    redirect_port: int = Field(default=DEFAULT_REDIRECT_PORT, gt=0)
     allow_writes: bool = False
     cache_ttl: int = Field(default=30, ge=0)
     timeout: float = Field(default=30.0, gt=0)
@@ -121,7 +138,7 @@ class DeputyConfig(BaseModel):
     def _validate_base_url(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
-        normalized = _normalize_base_url(value)
+        normalized = normalize_base_url(value)
         host = urlparse(normalized).hostname or ""
         if not host.endswith(".deputy.com"):
             # Fail closed on an unexpected host: a typo or wrong value could point the
@@ -259,6 +276,12 @@ class DeputyConfig(BaseModel):
         explicitly, otherwise a ``.env`` in the current directory is used when
         present. Real environment variables always take precedence over the file.
 
+        The security-sensitive keys ``DEPUTY_ALLOW_WRITES``,
+        ``DEPUTY_ALLOW_CUSTOM_HOST`` and ``DEPUTY_TOKEN_STORE`` are honored only from the
+        real process environment or from an EXPLICITLY named ``DEPUTY_ENV_FILE`` -- never
+        from an auto-loaded cwd ``.env`` (a stdio server's cwd is host-controlled, so an
+        untrusted directory must not be able to flip these).
+
         Args:
             environ: Optional mapping to read instead of ``os.environ`` (tests).
 
@@ -275,7 +298,7 @@ class DeputyConfig(BaseModel):
         oauth_client_secret = (env.get("DEPUTY_OAUTH_CLIENT_SECRET") or "").strip()
         token_store_raw = (env.get("DEPUTY_TOKEN_STORE") or "").strip()
         token_store_path = Path(token_store_raw) if token_store_raw else _default_token_store_path()
-        redirect_port = _parse_int(env, "DEPUTY_OAUTH_REDIRECT_PORT", _DEFAULT_REDIRECT_PORT)
+        redirect_port = _parse_int(env, "DEPUTY_OAUTH_REDIRECT_PORT", DEFAULT_REDIRECT_PORT)
 
         # OAuth is a usable path when both client creds are present (so 'deputy-mcp login'
         # can mint/refresh a token). Keyed on credentials, not on a token-store file, so
@@ -349,6 +372,14 @@ def _with_env_file(env: Mapping[str, str], *, allow_cwd_default: bool) -> Mappin
     picked up — but only when reading the real process environment
     (``allow_cwd_default``), so tests passing an explicit mapping stay hermetic and
     can never silently absorb a developer's local credentials.
+
+    Trust boundary: an EXPLICITLY named ``DEPUTY_ENV_FILE`` is trusted and all its keys
+    are honored. An AUTO-loaded cwd ``.env`` is NOT -- a stdio server inherits the MCP
+    host's chosen working directory, so an untrusted directory's ``.env`` must not flip
+    security-sensitive flags. The keys in :data:`_CWD_ENV_DENYLIST`
+    (``DEPUTY_ALLOW_WRITES``/``DEPUTY_ALLOW_CUSTOM_HOST``/``DEPUTY_TOKEN_STORE``) are
+    therefore stripped from an auto-loaded file; credential-loading keys stay intact so an
+    ordinary user setup still works.
     """
     explicit = (env.get("DEPUTY_ENV_FILE") or "").strip()
     candidate = Path(explicit) if explicit else Path(".env")
@@ -359,10 +390,15 @@ def _with_env_file(env: Mapping[str, str], *, allow_cwd_default: bool) -> Mappin
         )
     if not explicit and (not allow_cwd_default or not candidate.is_file()):
         return env
+    # An auto-loaded cwd file (no explicit DEPUTY_ENV_FILE) may not supply the
+    # security-sensitive keys; an explicitly named file is trusted with all of them.
+    auto_loaded = not explicit
     file_values = {
         key: value
         for key, value in dotenv_values(candidate).items()
-        if value is not None and key.startswith("DEPUTY_")
+        if value is not None
+        and key.startswith("DEPUTY_")
+        and not (auto_loaded and key in _CWD_ENV_DENYLIST)
     }
     if not file_values:
         return env
@@ -408,4 +444,4 @@ def _summarize_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts) if parts else "check the DEPUTY_* environment variables."
 
 
-__all__ = ["DeputyConfig"]
+__all__ = ["DEPUTY_ENV_VARS", "DeputyConfig"]
