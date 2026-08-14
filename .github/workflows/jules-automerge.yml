@@ -1,0 +1,140 @@
+name: auto-merge maintenance PRs
+
+# Merges a background-maintenance pull request once this repository's own test
+# workflow has passed on it, so the review queue drains itself and the
+# maintenance loop never stalls at its cap waiting for a human.
+#
+# Augusto's call (2026-08-14): anything that passes CI may merge itself,
+# INCLUDING product code. The reasoning is his and it is sound for this
+# repository - the suite is large and honest, and a change that survives it is
+# more verified than most things a tired human waves through at midnight.
+#
+# What follows are therefore NOT quality gates. They are integrity gates: every
+# one of them exists to keep the sentence "CI passed" from becoming a lie.
+#
+# WHY NOT `gh pr merge --auto`: that flag means "merge when REQUIRED checks
+# pass", and a repository with no required checks configured has none to wait
+# for - so it merges immediately, before CI has said anything. It is safe only
+# behind branch protection, which is a repository setting, and a setting nobody
+# can see in a diff is the wrong home for the only thing between an agent and
+# master. Triggering on `workflow_run` puts the gate in a file you can read.
+#
+# WHY `workflow_run` IS SAFE HERE: it runs from the DEFAULT BRANCH with write
+# permissions - which is precisely why it must never check out the pull
+# request's code. It does not. Every fact comes from the API; nothing from the
+# branch is executed, sourced, or interpolated into a shell.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: jules-automerge-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    # The suite must have SUCCEEDED, on a pull-request run. Green on master says
+    # nothing about a branch.
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Decide whether this pull request may merge itself
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MAX_CHANGED_LINES: "600"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                 --jq '[.[] | select(.state=="open")][0].number // empty')
+          if [ -z "$pr" ]; then echo "no open PR for $HEAD_SHA"; exit 0; fi
+
+          meta=$(gh api "repos/$REPO/pulls/$pr")
+          branch=$(printf '%s' "$meta"   | jq -r .head.ref)
+          draft=$(printf '%s' "$meta"    | jq -r .draft)
+          same_repo=$(printf '%s' "$meta"| jq -r '.head.repo.full_name == .base.repo.full_name')
+          adds=$(printf '%s' "$meta"     | jq -r .additions)
+          dels=$(printf '%s' "$meta"     | jq -r .deletions)
+
+          # INTEGRITY GATE 1 - it has to be our own agent, on this repository.
+          # A fork is refused outright: a stranger opening a pull request must
+          # never reach master, no matter how green.
+          if [ "$same_repo" != "true" ]; then echo "PR #$pr is from a fork - refusing"; exit 0; fi
+          if [ "$draft" = "true" ]; then echo "PR #$pr is a draft"; exit 0; fi
+          if ! printf '%s' "$branch" | grep -qE '^jules/|[0-9]{15,}'; then
+            echo "PR #$pr ($branch) is not a maintenance branch - for a human"
+            exit 0
+          fi
+
+          # INTEGRITY GATE 2 - size. Not a judgement about quality: a 2000-line
+          # change nobody reads is a different kind of event from a 30-line one,
+          # and the brief tells the agent to make the smallest correct fix. A
+          # large diff means the task drifted, which is worth ten minutes of a
+          # human's attention. Raise this number if it ever bites for real.
+          if [ $((adds + dels)) -gt "$MAX_CHANGED_LINES" ]; then
+            echo "PR #$pr changes $((adds + dels)) lines (cap $MAX_CHANGED_LINES) - for a human"
+            exit 0
+          fi
+
+          files=$(gh api --paginate "repos/$REPO/pulls/$pr/files" \
+                    --jq '.[] | "\(.status) \(.filename)"')
+          echo "files:"; printf '%s\n' "$files" | sed 's/^/  /'
+
+          # INTEGRITY GATE 3 - a deleted test cannot be allowed to buy a green
+          # suite. Removing the test that fails is the cheapest way to make CI
+          # pass, and it is indistinguishable from a real fix at the level of
+          # "conclusion == success".
+          if printf '%s\n' "$files" | grep -qE '^removed .*(test|spec)'; then
+            echo "PR #$pr deletes a test file - a human decides that"
+            exit 0
+          fi
+
+          # INTEGRITY GATE 4 - the workflow files ARE the gate, and this file is
+          # one of them. Left open, an agent could weaken the check that lets it
+          # merge, or neuter the suite so that passing means nothing. So a
+          # workflow diff is held to a SHAPE, not a category: added and removed
+          # lines may only be `uses:` lines or comments - i.e. a pin move, which
+          # is the one workflow edit the maintenance loop is designed to produce.
+          if printf '%s\n' "$files" | grep -q ' \.github/workflows/'; then
+            offending=$(gh api "repos/$REPO/pulls/$pr" \
+                          -H "Accept: application/vnd.github.v3.diff" \
+                        | grep -E '^[+-]' \
+                        | grep -vE '^(\+\+\+|---)' \
+                        | grep -vE '^[+-][[:space:]]*#' \
+                        | grep -vE '^[+-][[:space:]]*-?[[:space:]]*uses:[[:space:]]*[A-Za-z0-9]' \
+                        || true)
+            if [ -n "$offending" ]; then
+              echo "workflow change is not a pure pin move - for a human:"
+              printf '%s\n' "$offending" | head -20 | sed 's/^/  /'
+              exit 0
+            fi
+          fi
+
+          echo "PR #$pr cleared"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Merge
+        if: steps.gate.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.gate.outputs.pr }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
+          gh pr comment "$PR" --repo "$REPO" --body \
+            "Merged automatically: the test suite passed on this branch and the change cleared the integrity gates (own agent, same repo, bounded size, no test deleted, no workflow change beyond a pin move)."
