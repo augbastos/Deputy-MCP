@@ -1,0 +1,56 @@
+name: scpe
+
+# AI-use disclosure gate — https://github.com/augbastos/scpe
+#
+# Every pull request must say whether AI was used, in a form a parser can find: an
+# `Assisted-by:` commit trailer, or a ticked box in .github/pull_request_template.md.
+# Declaring that no AI was used counts. Silence does not, and fails this check.
+#
+# TWO FILES, NOT ONE — load-bearing. This untrusted half runs on `pull_request` with a
+# read-only token and may execute a contributor's code; scpe-seal.yml runs afterwards in
+# the base repo with a write token and only posts what this job decided. A workflow
+# cannot name itself in `workflow_run`, so the trigger has to live in a second file.
+#
+# LEVEL 1, NOT 2 — level 2 requires a signed envelope anchored to a forge-published key,
+# and no coding agent has one today. Gating there would ban agent contributions rather
+# than raise the bar. The switch is the `level:` line below.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:                       # UNTRUSTED — no secrets; safe to run contributor code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false   # never write the token into .git/config
+          # fetch-depth: 0 is required at level 2, where the seal rebuilds
+          # `git diff BASE...HEAD` to check it against the signed digest. Level 1 reads
+          # only the PR body and commit messages, so the full history is not needed —
+          # but it stays here because it costs little on a repo this size and it is what
+          # the level-2 switch below needs the day it flips. Removing it would make that
+          # switch silently report every PR as `tampered`.
+          fetch-depth: 0
+
+      - id: seal
+        # Pinned to the published tag, not `./`, on purpose: the bytes that decide the
+        # verdict must not come from the pull request being judged. A contributor who
+        # could edit the action in their PR could edit the gate that judges it.
+        uses: augbastos/scpe@v0.2.3
+        with:
+          level: "1"                   # AI-disclosure lint. See the note at the top.
+          require: "true"              # a gate, not a report: no disclosure = failing check
+          run-tests: "false"           # this repo's own CI runs its suite separately
+
+      # Hand the verdict + PR number to the trusted job. The number MUST travel in the
+      # artifact: github.event.workflow_run.pull_requests is empty for fork PRs.
+      - run: echo "${{ github.event.pull_request.number }}" > pr-number.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: scpe-results
+          path: |
+            results.json
+            pr-number.txt
