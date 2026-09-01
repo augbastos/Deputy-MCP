@@ -182,8 +182,8 @@ Before opening a PR, confirm:
 - [ ] New tools follow the register + docstring-contract + annotations pattern, and the
       `client/` (MCP-free) vs `server/` (MCP) split is respected.
 - [ ] Docstrings and docs make no claim the code can't back (no "live-tested",
-      "production-proven", usage/star counts, or registry claims unless they are actually
-      true — see the [ROADMAP](ROADMAP.md) note on the un-run smoke test).
+      "production-proven", usage/star counts, or registry claims unless they are
+      actually true — see [ROADMAP.md](ROADMAP.md)).
 - [ ] Commits follow Conventional Commits.
 - [ ] No secrets, tokens, or `.env` files are committed.
 - [ ] The PR description says what changed and why.

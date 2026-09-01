@@ -1,99 +1,49 @@
-# deputy-mcp — a local, read-only-by-default MCP server for Deputy
+# deputy-mcp
+
+Ask Claude *"what's my next shift?"* or *"who's clocked in right now?"* and get the
+answer straight from your [Deputy](https://www.deputy.com) roster — no app, no dashboard.
 
 [![CI](https://github.com/augbastos/deputy-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/augbastos/deputy-mcp/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-6b46c1.svg)](https://modelcontextprotocol.io)
-[![writes: opt-in, off by default](https://img.shields.io/badge/writes-opt--in%2C%20off%20by%20default-lightgrey.svg)](#security--privacy)
+[![writes: opt-in, off by default](https://img.shields.io/badge/writes-opt--in%2C%20off%20by%20default-lightgrey.svg)](#privacy--security)
 
-**Ask about your Deputy roster, timesheets, team and shifts from Claude or any MCP client — reads always work, writes stay off until you opt in.**
-
-deputy-mcp exposes Deputy's workforce data to a language model through the [Model Context Protocol](https://modelcontextprotocol.io): eleven read tools for schedules, timesheets, people, colleagues, locations and your calendar feed — the self-service ones work on any employee token, the team/manager ones need an elevated access level — plus five write tools (clock in/out, claim an open shift, request a swap, set unavailability) that stay hidden until you explicitly opt in. It runs locally, talks only to your own Deputy install, and inherits exactly the permissions of the token you give it.
-
----
-
-## How it works
-
-```mermaid
-flowchart LR
-    A["Claude Code / Claude Desktop /<br/>any MCP client"] -->|"MCP over stdio"| B["deputy-mcp server<br/>(local process)"]
-
-    subgraph Cred["credential — pick one"]
-        T1["DEPUTY_API_TOKEN<br/>permanent token, from env"]
-        T2["deputy-mcp login<br/>OAuth 2.0 authorization code<br/>(smoke-test-pending)"]
-        T3["DEPUTY_CALENDAR_URL<br/>personal iCal feed, no token"]
-    end
-    T2 -.->|"caches to"| S["~/.deputy-mcp/token.json<br/>(redacted, owner-only)"]
-
-    T1 --> B
-    S --> B
-    T3 --> B
-
-    B --> G{"DEPUTY_ALLOW_WRITES"}
-    G -->|"false — default"| R["11 read tools<br/>registered, always on"]
-    G -.->|"true — opt-in only"| W["5 write tools<br/>clock in/out, claim,<br/>swap, unavailability"]
-
-    R -->|"HTTPS"| API["Deputy /api/v1<br/>your install only"]
-    T3 -.->|"HTTPS, no token"| ICS["Deputy .ics roster feed<br/>(bypasses /api/v1)"]
-    W -.->|"HTTPS, only if enabled"| API
-
-    API --> B
-    ICS --> B
-    B -->|"response_format:<br/>markdown or json"| A
-```
-
-Two things worth reading off the diagram, not just skimming it: the write path (dashed) only exists at all when `DEPUTY_ALLOW_WRITES=true` — with it unset, a model can't see the write tools, let alone call them. And the iCal credential is a different code path, not a stripped-down OAuth: it fetches your personal `.ics` feed directly and never touches `/api/v1`, which is exactly why it needs no token. The only thing deputy-mcp ever writes to disk unprompted is the OAuth token cache at `~/.deputy-mcp/token.json` (owner-only permissions, values redacted in logs) — the permanent-token and iCal paths keep credentials in memory only, sourced from your environment or `.env` each run.
+deputy-mcp connects Deputy — the workforce scheduling and timesheet platform — to
+Claude and any other MCP client. If your work life runs through Deputy, this lets you
+ask about your own shifts, timesheets, and who's on right now in plain language,
+instead of opening the app. It runs on your machine and only ever talks to your own
+Deputy install.
 
 ---
 
-## Why this exists
+## Example
 
-You can already reach Deputy from an LLM through hosted connector platforms — Zapier, StackOne, viaSocket, Pipedream, SyncHub and others expose a "Deputy MCP" endpoint. They work, but they are the same shape: closed-source, and your workforce data (employee names, schedules, timesheets) flows through a third party's servers, usually behind a paid plan and yet another account.
+> **"When do I work next?"**
+> Fri 18 Jul, 09:00–17:00 · Cloud Nine Cafe
 
-deputy-mcp is the **open-source, self-hosted** alternative for people who would rather not do that. It runs on your machine, its only outbound traffic is to your own Deputy install, the code is MIT-licensed and auditable, and it needs no account anywhere but Deputy. The pitch is **local and private instead of hosted and proprietary**. If a managed platform suits you better, use one of those; if you want the auditable, data-stays-home option, this is it.
+> **"Am I clocked in right now?"**
+> Yes — since 20:27, still in progress.
+
+> **"Who else is on with me tonight?"**
+> Sam O'Brien, rostered until 23:27.
+
+*(Fictional example data — Cloud Nine Cafe and its staff aren't real; see
+[`examples/mock_deputy.py`](examples/mock_deputy.py).)*
 
 ---
 
-## Quickstart
+## Installation
 
-You need two things before connecting: a **Deputy API token** and your **base URL**.
+Needs [uv](https://docs.astral.sh/uv/) (or anything that can run `uvx`).
 
-- **Token** — in Deputy, go to **Business settings → Integrations → API access**, create a **New OAuth Client**, then **Get an Access Token** (Deputy shows it once — copy it). This is a permanent token; it inherits your own Deputy permissions.
-- **Base URL** — the address you see in the browser when you are logged in to Deputy, e.g. `https://your-company.eu.deputy.com`. The pattern is `https://{install}.{geo}.deputy.com` (`geo` is your region, such as `au`, `eu`, `uk`, `na`). A trailing slash or an `/api/v1` suffix is accepted and normalized away.
+**Get a token.** In Deputy: **Business settings → Integrations → API access → New
+OAuth Client → Get an Access Token** (shown once — copy it). This needs an admin
+access level in Deputy. No admin access? Skip to
+[No token? Use your calendar feed](#no-token-use-your-calendar-feed) below.
 
-> **Getting a token — the honest version.** Creating a Deputy API token needs an **admin / System Administrator** access level: Deputy's token-creation page (`/exec/devapp/oauth_clients`, reached via **Business settings → Integrations**) is admin-only, and a regular employee account cannot self-mint one — verified against a live install, where a non-admin sees "you do not have access to this application". If you are not an admin on your workplace's Deputy, either use your own Deputy install or a free trial (where you are the admin) or ask your workplace's Deputy administrator to issue you a token. This is how Deputy works, not a limit of this tool — and once you have a token, every self-service tool below works at a plain employee access level.
-
-### No API token? Use your calendar feed (iCal mode)
-
-Not an admin, so you can't create a token? Deputy still gives **every employee** a personal iCal feed of their own roster — and deputy-mcp can run from just that URL, with no API token and no base URL. This is the way to use the server when you can't mint a token.
-
-**Setup.** In Deputy, open **My Schedule → Subscribe / Export to calendar** and copy the link. Set it as `DEPUTY_CALENDAR_URL`, and leave `DEPUTY_API_TOKEN` and `DEPUTY_BASE_URL` unset. The link carries your personal feed token, so it is a secret — never commit it.
-
-**Claude Code**
-
-```bash
-claude mcp add deputy \
-  -e DEPUTY_CALENDAR_URL=https://your-company.eu.deputy.com/exec/ical/xxxxxxxx/My_Roster.ics \
-  -- uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp
-```
-
-**Claude Desktop**
-
-```json
-{
-  "mcpServers": {
-    "deputy": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/augbastos/deputy-mcp", "deputy-mcp"],
-      "env": {
-        "DEPUTY_CALENDAR_URL": "https://your-company.eu.deputy.com/exec/ical/xxxxxxxx/My_Roster.ics"
-      }
-    }
-  }
-}
-```
-
-**What iCal mode gives you.** Roster only, read-only. The registered tools are `deputy_get_my_roster`, `deputy_next_shift`, `deputy_whoami` (a lightweight identity/mode check) and `deputy_get_my_calendar_url`. Timesheets, team roster, who-is-working, employee and area lookup, shift search, and every write tool require an API token (see above) and are simply not present in iCal mode. The feed is durable — it does not expire like a login session — so once it is set the server keeps working as your roster changes.
+**Get your base URL.** The address you see in the browser when logged in to Deputy,
+e.g. `https://your-company.eu.deputy.com`.
 
 ### Claude Code
 
@@ -104,11 +54,11 @@ claude mcp add deputy \
   -- uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp
 ```
 
-Add `-e DEPUTY_ALLOW_WRITES=true` if you want the write tools (see [Security & privacy](#security--privacy)).
+Add `-e DEPUTY_ALLOW_WRITES=true` to also enable the write tools (off by default).
 
 ### Claude Desktop
 
-Add the server to your `claude_desktop_config.json`:
+Add to `claude_desktop_config.json`:
 
 ```json
 {
@@ -127,194 +77,158 @@ Add the server to your `claude_desktop_config.json`:
 
 ### Any other MCP client
 
-deputy-mcp speaks MCP over **stdio**. Point your client at the command `uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp` and pass the `DEPUTY_*` environment variables listed under [Configuration](#configuration).
+deputy-mcp speaks MCP over stdio. Point your client at
+`uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp` and set the same
+`DEPUTY_*` environment variables (full list in [Configuration](#configuration)).
 
-### Once deputy-mcp is on PyPI
+### No token? Use your calendar feed
 
-The commands above install straight from GitHub because the package is **not published to
-PyPI yet**. Once the first release lands, the `--from git+https://github.com/augbastos/deputy-mcp`
-part is no longer needed and the shorter `uvx deputy-mcp` will work anywhere above.
+Not a Deputy admin? Every employee has a personal iCal feed of their own roster, and
+that's enough to run deputy-mcp with no API token. In Deputy, open **My Schedule →
+Subscribe / Export to calendar** and copy the link. Set it as `DEPUTY_CALENDAR_URL`
+instead of `DEPUTY_API_TOKEN` / `DEPUTY_BASE_URL`.
+
+This mode is read-only and roster-only — `deputy_get_my_roster`, `deputy_next_shift`,
+`deputy_whoami`, `deputy_get_my_calendar_url`. The feed link is a secret (it carries
+your personal token); never commit it.
 
 ---
 
-## See it work
+## Tools
 
-The excerpts below are a captured run of the companion CLI against the bundled mock harness (`examples/mock_deputy.py`), which serves **fictional** data on loopback — no live Deputy instance. Names and companies (Cloud Nine Cafe, Alex Rivera, Sam O'Brien) are made up. Times are UTC.
+Every tool accepts `response_format` — `"markdown"` (default) or `"json"`. `?` marks
+an optional argument.
 
-```console
-$ deputy-mcp whoami
-Authenticated as: Alex Rivera
-  UserId: 201
-  EmployeeId: 101
-  Company: 1
-  CompanyName: Cloud Nine Cafe
-Primary location: Cloud Nine Cafe
+### Read — always on
 
-$ deputy-mcp roster
-My roster 2026-07-17 to 2026-07-24:
-  - 2026-07-17 20:27-00:27 UTC  Alex Rivera  (area #11)
-  - 2026-07-18 09:00-17:00 UTC  Alex Rivera  (area #11)
+Self-service tools work on any employee token. Team/manager tools need an elevated
+access level — on a plain employee token they fail with a clear "needs manager/admin
+access" message rather than a cryptic error.
 
-$ deputy-mcp who
-As of 2026-07-17T21:28:40+00:00:
+| Tool | Arguments | Returns |
+|------|-----------|---------|
+| `deputy_whoami` | — | Who the token authenticates as, your location and timezone, whether you're clocked in, and your calendar feed URL. Run this first. |
+| `deputy_get_my_roster` | `start_date?`, `end_date?` | Your scheduled shifts in a date range (default: today → +7 days). |
+| `deputy_next_shift` | `employee?` | Your next upcoming shift. Naming someone else needs manager/admin. |
+| `deputy_get_my_timesheets` | `start_date?`, `end_date?` | Your worked timesheets, with a total (default: last 7 days). |
+| `deputy_get_my_calendar_url` | — | Your personal iCal feed — add it once to Google/Apple/Outlook Calendar. |
+| `deputy_get_areas` | — | Areas (work locations) you work, with ids. |
+| `deputy_get_my_colleagues` | `same_workplace_only?` | People you work with, grouped by location — names only, never contact details. |
+| `deputy_get_team_roster` *(manager)* | `date?`, `start_date?`, `end_date?`, `area_id?` | Every scheduled shift in a range, optionally scoped to one area. |
+| `deputy_who_is_working` *(manager)* | `at?` | Snapshot at an instant (default now): who's clocked in vs rostered. |
+| `deputy_get_employee_info` *(manager)* | `name_or_id` | Profile(s) matching a name or id. |
+| `deputy_search_shifts` *(manager)* | `employee?`, `area_id?`, `start_date?`, `end_date?`, `open_only?`, `limit?`, `offset?` | Shifts filtered by person, area, date, open status — paginated. |
 
-Clocked in (1):
-  - 2026-07-17 20:27---:-- UTC  Alex Rivera  0.00h (in progress)
+### Write — opt-in, off by default
 
-Rostered now (2):
-  - 2026-07-17 20:27-00:27 UTC  Alex Rivera  (area #11)
-  - 2026-07-17 19:27-23:27 UTC  Sam O'Brien  (area #12)
+This is a deliberate security default, not a limitation: write tools only get
+registered when you set `DEPUTY_ALLOW_WRITES=true`. Until then, a model can't see
+them, let alone call them. Every write acts as the signed-in token holder; none of
+them delete anything.
 
-$ deputy-mcp next
-Next shift: 2026-07-18 09:00-17:00 UTC  Alex Rivera
+| Tool | Arguments | Returns |
+|------|-----------|---------|
+| `deputy_claim_open_shift` | `shift_id` | Assigns you to an open shift. |
+| `deputy_request_shift_swap` | `shift_id`, `note?` | Offers one of your shifts for swap, pending manager approval. |
+| `deputy_set_unavailability` | `start`, `end`, `reason?`, `repeat?` | Records an unavailability window (one-off or recurring). |
+| `deputy_clock_in` | `area_id?` | Starts a live timesheet. |
+| `deputy_clock_out` | `mealbreak_minutes?` | Ends your in-progress timesheet. |
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Claude / any MCP client"] -->|"MCP, stdio"| B["deputy-mcp<br/>(runs on your machine)"]
+
+    T1["DEPUTY_API_TOKEN"] --> B
+    T2["DEPUTY_CALENDAR_URL<br/>(no token)"] --> B
+
+    B --> R["Read tools<br/>always on"]
+    B -.->|"DEPUTY_ALLOW_WRITES=true"| W["Write tools<br/>off by default"]
+
+    R --> API["Your Deputy install"]
+    W -.-> API
 ```
 
----
-
-## Tool reference
-
-Every tool accepts a `response_format` argument — `"markdown"` (human-readable, the default) or `"json"` (raw records). Optional arguments are marked `?`. Read tools never mutate Deputy.
-
-Read tools split by the Deputy access level they require. On a plain **employee** token the manager/admin tools do not fail cryptically — they return a clear "needs a manager/admin access level" message and point you back to the self-service tools that do work for you.
-
-### Self-service read tools (any employee token)
-
-| Tool | Arguments | Returns |
-|------|-----------|---------|
-| `deputy_whoami` | — | Who the token authenticates as, plus company/location and its timezone, whether you are clocked in right now, and your personal calendar feed. Run this first to confirm setup. |
-| `deputy_get_my_roster` | `start_date?`, `end_date?` | Your own scheduled shifts in a date range (defaults to today through +7 days). |
-| `deputy_next_shift` | `employee?` | Your single next upcoming shift. Omit `employee` for yourself; naming another person needs a manager/admin access level. |
-| `deputy_get_my_timesheets` | `start_date?`, `end_date?` | Your own timesheets — actual worked time — with a worked-hours total (defaults to the last 7 days). |
-| `deputy_get_my_calendar_url` | — | Your personal Deputy iCal subscription URL. Add it once to Google, Apple or Outlook Calendar to see your shifts there, auto-refreshing as your roster changes. |
-| `deputy_get_areas` | — | The areas (operational units / work locations) you work, with their ids. On an employee token these are derived from your own roster; a manager/admin token lists every area on the install. |
-| `deputy_get_my_colleagues` | `same_workplace_only?` | The people you work with, grouped by same workplace vs other locations (defaults to just your own location). Shows names and workplace membership only — never colleagues' contact details. |
-
-### Manager / admin read tools (needs an elevated access level)
-
-| Tool | Arguments | Returns |
-|------|-----------|---------|
-| `deputy_get_team_roster` | `date?`, `start_date?`, `end_date?`, `area_id?` | Every scheduled shift in a range (or a single `date`), optionally scoped to one area. |
-| `deputy_who_is_working` | `at?` | Snapshot at an instant (default now): who across the team is clocked in vs who is rostered on. |
-| `deputy_get_employee_info` | `name_or_id` | Profile(s) for employees matching a name substring or numeric id, each listed with its id. |
-| `deputy_search_shifts` | `employee?`, `area_id?`, `start_date?`, `end_date?`, `open_only?`, `limit?`, `offset?` | Shifts filtered by person, area, date range and open status; paginated (max 500 per page). |
-
-### Write tools (opt-in)
-
-Write tools are **only registered when `DEPUTY_ALLOW_WRITES=true`**. While writes are disabled they are invisible to the client — a language model cannot even see that they exist. Every write acts as the signed-in token holder; none of them delete anything.
-
-| Tool | Arguments | Returns |
-|------|-----------|---------|
-| `deputy_claim_open_shift` | `shift_id` | Assigns you to an open (unassigned) shift by filling its roster. |
-| `deputy_request_shift_swap` | `shift_id`, `note?` | Offers one of your shifts up for swap; creates a request pending manager approval. |
-| `deputy_set_unavailability` | `start`, `end`, `reason?`, `repeat?` | Records an unavailability window (one-off, or recurring via an iCal `RRULE`). |
-| `deputy_clock_in` | `area_id?` | Starts a live timesheet against an area (`area_id` auto-resolved only when the install has a single rosterable area). |
-| `deputy_clock_out` | `mealbreak_minutes?` | Ends your single in-progress timesheet, optionally recording a meal break. |
+Reads are always registered. Writes only exist as callable tools once you opt in —
+otherwise the model can't see them at all.
 
 ---
 
-## Who is this for
+## Privacy & security
 
-**Shift workers** — check your own schedule in plain language, no app-hunting:
-> "When do I work next?" · "Am I on with Alex this week?" · "How many hours did I work last week?"
+Runs locally as a stdio process — no hosted backend, no telemetry. Its only network
+traffic is HTTPS to your own Deputy install (or your personal iCal feed); nothing
+passes through a third party. deputy-mcp does exactly what your Deputy token can do,
+no more — the token is held in memory, redacted from logs, and never printed.
 
-**Team leads** — real-time coverage and gaps at a glance:
-> "Who's on right now?" · "Are there any open shifts on Saturday?" · "Show me the team roster for tomorrow in the kitchen area."
+---
 
-**Small business owners** — quick answers without opening the Deputy UI:
-> "Is anyone clocked in over at the second location?" · "Who's scheduled this weekend?"
+## Configuration
 
-**Developers** — the async Deputy client underneath the MCP layer is a reusable, MCP-free library. Point it at your install and call it directly:
+All settings are `DEPUTY_*` environment variables. Provide **one** credential set:
+`DEPUTY_API_TOKEN` + `DEPUTY_BASE_URL` for the full API, or `DEPUTY_CALENDAR_URL`
+alone for iCal mode. Copy [`.env.example`](.env.example) to `.env` and fill it in
+(never commit `.env`).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DEPUTY_API_TOKEN` | API mode | — | Deputy permanent or OAuth access token (stored redacted). |
+| `DEPUTY_BASE_URL` | API mode | — | Your install origin, e.g. `https://your-company.eu.deputy.com`. |
+| `DEPUTY_CALENDAR_URL` | iCal mode | — | Your personal iCal feed URL (token-free, roster-only, stored redacted). |
+| `DEPUTY_ALLOW_WRITES` | No | `false` | Enable the write tools. |
+| `DEPUTY_ALLOW_CUSTOM_HOST` | No | `false` | Allow a base URL host outside `*.deputy.com` (enterprise custom domains). |
+| `DEPUTY_CACHE_TTL` | No | `30` | In-memory read-cache lifetime, seconds. `0` disables caching. |
+| `DEPUTY_TIMEOUT` | No | `30` | Per-request HTTP timeout, seconds. |
+| `DEPUTY_MAX_RETRIES` | No | `3` | Automatic retries on `429`/`5xx` (with backoff). |
+| `DEPUTY_ENV_FILE` | No | — | Path to a dotenv file to load `DEPUTY_*` values from. |
+
+---
+
+## CLI (bonus)
+
+The same client ships as a small standalone CLI, for a quick check without an MCP
+client:
+
+```bash
+deputy-mcp whoami     # who you're authenticated as
+deputy-mcp roster     # your roster (--team for everyone, --area ID to scope)
+deputy-mcp who        # who's working right now
+deputy-mcp next       # your next shift
+```
+
+Add `--json` for raw output. With no subcommand, `deputy-mcp` starts the MCP server.
+
+---
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, project layout, and the PR
+checklist. Short version:
+
+```bash
+uv sync
+uv run pytest          # full suite, mocked, no live calls
+uv run ruff check .
+uv run mypy
+```
+
+The Deputy client has no MCP dependency and works standalone:
 
 ```python
 import asyncio
 from deputy_mcp.client import DeputyClient
 
 async def main() -> None:
-    async with DeputyClient.from_env() as deputy:  # reads DEPUTY_* env vars
+    async with DeputyClient.from_env() as deputy:
         print(await deputy.next_shift())
 
 asyncio.run(main())
 ```
 
----
-
-## Security & privacy
-
-- **Writes are opt-in and off by default.** A workforce system a model can drive should not be able to clock you in or give your shift away unless you asked for that. Set `DEPUTY_ALLOW_WRITES=true` to enable the five write tools; leave it unset and they are never registered.
-- **The token is your permissions.** deputy-mcp does exactly what your Deputy account can do — no more. Use a token from **your own account** for personal use; do not hand it an admin or service-account token "just in case", because the model then inherits that reach.
-- **Fail-closed host policy.** `DEPUTY_BASE_URL` must resolve to a `*.deputy.com` host or startup refuses, so a typo can't quietly point your token at some other server. Legitimate enterprise custom domains opt back in with `DEPUTY_ALLOW_CUSTOM_HOST=true`.
-- **Security flags never come from an auto-loaded directory `.env`.** For convenience, `DEPUTY_*` values can be read from a `.env` in the current directory — but a stdio server's working directory is chosen by the (host-controlled) MCP host, so an untrusted project's `.env` must not be able to escalate privilege. The three security-sensitive keys — `DEPUTY_ALLOW_WRITES`, `DEPUTY_ALLOW_CUSTOM_HOST` and `DEPUTY_TOKEN_STORE` — are therefore honoured **only** from the real process environment or from a file you name explicitly with `DEPUTY_ENV_FILE`, never from an auto-discovered cwd `.env`. Credential-loading keys still load from a cwd `.env`, so an ordinary setup is unaffected.
-- **OAuth login mode is available (`deputy-mcp login`), endpoints not yet smoke-tested.** Besides the permanent admin token and the read-only iCal feed, deputy-mcp ships an OAuth 2.0 authorization-code login for employees who cannot mint a token: register an app, set `DEPUTY_OAUTH_CLIENT_ID` / `DEPUTY_OAUTH_CLIENT_SECRET`, and run `deputy-mcp login` to obtain an access token bound to your own account. The client secret and the minted tokens are held as redacted secrets and never logged. **Caveat:** the live Deputy OAuth endpoints are **smoke-test-pending** — the flow is coded against Deputy's documented endpoints but has not yet been exercised against a real install, so treat this mode as unverified until that smoke test runs.
-- **Runs locally, zero telemetry.** The server runs on your machine and phones nothing home. Its only network traffic is HTTPS to your own Deputy install. Your colleagues' roster data stays between you and Deputy — it never passes through any third party. The token is held as a redacted secret and is never logged or printed.
-
----
-
-## Configuration
-
-All configuration comes from `DEPUTY_*` environment variables. Provide **one** credential set: `DEPUTY_API_TOKEN` + `DEPUTY_BASE_URL` for the full API, or `DEPUTY_CALENDAR_URL` alone for token-free iCal mode. Copy [`.env.example`](.env.example) to `.env` and fill it in (never commit `.env` — it holds a secret). Values can also be loaded from a dotenv file: point `DEPUTY_ENV_FILE` at one, or run from a directory containing a `.env`; real environment variables always win over the file.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DEPUTY_API_TOKEN` | API mode | — | Deputy permanent token or OAuth access token (stored redacted). |
-| `DEPUTY_ENV_FILE` | No | — | Path to a dotenv file to load `DEPUTY_*` values from (a `./.env` is picked up automatically). |
-| `DEPUTY_BASE_URL` | API mode | — | Your install origin, e.g. `https://your-company.eu.deputy.com`. A trailing slash or `/api/v1` suffix is normalized away. |
-| `DEPUTY_CALENDAR_URL` | iCal mode | — | Your personal Deputy iCal feed URL — the token-free, roster-only credential (My Schedule → Subscribe/Export to calendar). A secret (holds your feed token), stored redacted. |
-| `DEPUTY_ALLOW_WRITES` | No | `false` | Enable the write tools. Accepts `true`/`1`/`yes` (case-insensitive). |
-| `DEPUTY_ALLOW_CUSTOM_HOST` | No | `false` | Allow a `base_url` host outside `*.deputy.com` (enterprise custom domains only). |
-| `DEPUTY_CACHE_TTL` | No | `30` | In-memory read-cache lifetime in seconds; `0` disables caching. |
-| `DEPUTY_TIMEOUT` | No | `30` | Per-request HTTP timeout in seconds. |
-| `DEPUTY_MAX_RETRIES` | No | `3` | Max automatic retries on `429`/`5xx`/transport errors (with backoff). |
-
----
-
-## CLI (bonus)
-
-The same client is available as a small standalone CLI — handy for a quick check or a shell script, no MCP client required. It reads the same `DEPUTY_*` environment variables and adds `--json` for raw output.
-
-```bash
-deputy-mcp whoami                          # authenticated user + location
-deputy-mcp roster --start 2026-07-20       # your roster (add --team for everyone, --area ID to scope)
-deputy-mcp timesheets --end 2026-07-17     # your timesheets
-deputy-mcp who                             # who is working right now
-deputy-mcp areas                           # list areas / operational units
-deputy-mcp next --employee "Alex Rivera"   # next upcoming shift (defaults to you)
-```
-
-With no subcommand, `deputy-mcp` launches the MCP server on stdio (equivalent to `deputy-mcp serve`).
-
----
-
-## Development
-
-Requires [uv](https://docs.astral.sh/uv/). Clone the repo, then:
-
-```bash
-uv sync                        # install into a local .venv
-uv run pytest                  # run the full test suite (all mocked, no live calls)
-uv run pytest -m live          # optional: read-only smoke tests against a real
-                               # Deputy instance (skipped without DEPUTY_* creds)
-uv run ruff check .            # lint
-uv run ruff format --check .   # formatting
-uv run mypy                    # type-check (strict)
-```
-
-CI runs the same gates on Linux (Python 3.11/3.12/3.13) and Windows (3.13). The client layer is MCP-free by design, so it stays reusable outside the server.
-
-Deputy's live API surface — endpoints, status codes and response shapes — was verified against a real install to drive the client design, including the self-service (`/api/v1/my/*`, `/api/v1/me`) vs manager/admin (`/api/v1/resource/*/QUERY`) access-level split. The test suite itself runs entirely against mocks; no end-to-end client smoke test has been run yet (that needs a token — see [Getting a token](#quickstart)), so the optional `-m live` suite is provided for anyone who has one and wants to exercise the client against their own instance.
-
-Run the server in a container:
-
-```bash
-docker compose run --rm deputy-mcp   # after copying .env.example to .env
-```
-
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## Roadmap
-
-Planned work and known gaps live in [ROADMAP.md](ROADMAP.md).
+Planned work lives in [ROADMAP.md](ROADMAP.md).
 
 ## License
 
