@@ -1,14 +1,48 @@
-# deputy-mcp
-
-**An MCP server for [Deputy](https://www.deputy.com) — ask about rosters, timesheets and shifts, and manage your own, from Claude or any MCP client.**
+# deputy-mcp — a local, read-only-by-default MCP server for Deputy
 
 [![CI](https://github.com/augbastos/deputy-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/augbastos/deputy-mcp/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-6b46c1.svg)](https://modelcontextprotocol.io)
+[![writes: opt-in, off by default](https://img.shields.io/badge/writes-opt--in%2C%20off%20by%20default-lightgrey.svg)](#security--privacy)
 
-> PyPI: coming soon. Until the first release is published, install from source (see [Quickstart](#quickstart)).
+**Ask about your Deputy roster, timesheets, team and shifts from Claude or any MCP client — reads always work, writes stay off until you opt in.**
 
 deputy-mcp exposes Deputy's workforce data to a language model through the [Model Context Protocol](https://modelcontextprotocol.io): eleven read tools for schedules, timesheets, people, colleagues, locations and your calendar feed — the self-service ones work on any employee token, the team/manager ones need an elevated access level — plus five write tools (clock in/out, claim an open shift, request a swap, set unavailability) that stay hidden until you explicitly opt in. It runs locally, talks only to your own Deputy install, and inherits exactly the permissions of the token you give it.
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Claude Code / Claude Desktop /<br/>any MCP client"] -->|"MCP over stdio"| B["deputy-mcp server<br/>(local process)"]
+
+    subgraph Cred["credential — pick one"]
+        T1["DEPUTY_API_TOKEN<br/>permanent token, from env"]
+        T2["deputy-mcp login<br/>OAuth 2.0 authorization code<br/>(smoke-test-pending)"]
+        T3["DEPUTY_CALENDAR_URL<br/>personal iCal feed, no token"]
+    end
+    T2 -.->|"caches to"| S["~/.deputy-mcp/token.json<br/>(redacted, owner-only)"]
+
+    T1 --> B
+    S --> B
+    T3 --> B
+
+    B --> G{"DEPUTY_ALLOW_WRITES"}
+    G -->|"false — default"| R["11 read tools<br/>registered, always on"]
+    G -.->|"true — opt-in only"| W["5 write tools<br/>clock in/out, claim,<br/>swap, unavailability"]
+
+    R -->|"HTTPS"| API["Deputy /api/v1<br/>your install only"]
+    T3 -.->|"HTTPS, no token"| ICS["Deputy .ics roster feed<br/>(bypasses /api/v1)"]
+    W -.->|"HTTPS, only if enabled"| API
+
+    API --> B
+    ICS --> B
+    B -->|"response_format:<br/>markdown or json"| A
+```
+
+Two things worth reading off the diagram, not just skimming it: the write path (dashed) only exists at all when `DEPUTY_ALLOW_WRITES=true` — with it unset, a model can't see the write tools, let alone call them. And the iCal credential is a different code path, not a stripped-down OAuth: it fetches your personal `.ics` feed directly and never touches `/api/v1`, which is exactly why it needs no token. The only thing deputy-mcp ever writes to disk unprompted is the OAuth token cache at `~/.deputy-mcp/token.json` (owner-only permissions, values redacted in logs) — the permanent-token and iCal paths keep credentials in memory only, sourced from your environment or `.env` each run.
 
 ---
 
@@ -16,7 +50,7 @@ deputy-mcp exposes Deputy's workforce data to a language model through the [Mode
 
 You can already reach Deputy from an LLM through hosted connector platforms — Zapier, StackOne, viaSocket, Pipedream, SyncHub and others expose a "Deputy MCP" endpoint. They work, but they are the same shape: closed-source, and your workforce data (employee names, schedules, timesheets) flows through a third party's servers, usually behind a paid plan and yet another account.
 
-deputy-mcp is the **open-source, self-hosted** alternative for people who would rather not do that. It runs on your machine, its only outbound traffic is to your own Deputy install, the code is MIT-licensed and auditable, and it needs no account anywhere but Deputy. As of July 2026 it is the only open-source, installable Deputy MCP server I'm aware of — the official MCP registry, PyPI and npm return nothing else — but the honest pitch is not "first", it's **local and private instead of hosted and proprietary**. If a managed platform suits you better, use one of those; if you want the auditable, data-stays-home option, this is it.
+deputy-mcp is the **open-source, self-hosted** alternative for people who would rather not do that. It runs on your machine, its only outbound traffic is to your own Deputy install, the code is MIT-licensed and auditable, and it needs no account anywhere but Deputy. The pitch is **local and private instead of hosted and proprietary**. If a managed platform suits you better, use one of those; if you want the auditable, data-stays-home option, this is it.
 
 ---
 
