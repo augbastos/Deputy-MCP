@@ -212,8 +212,15 @@ async def exchange_code(
     client_secret: str,
     code: str,
     redirect_uri: str,
+    *,
+    allow_custom_host: bool = False,
 ) -> OAuthTokens:
-    """Exchange an authorization ``code`` for an access/refresh token pair."""
+    """Exchange an authorization ``code`` for an access/refresh token pair.
+
+    ``allow_custom_host`` mirrors :attr:`~deputy_mcp.config.DeputyConfig.allow_custom_host`:
+    the resolved ``base_url`` is rejected unless its host ends in ``.deputy.com``, same as
+    static-token mode, unless the caller has explicitly opted in to a custom domain.
+    """
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -222,7 +229,9 @@ async def exchange_code(
         "redirect_uri": redirect_uri,
         "scope": SCOPE,
     }
-    return await _post_token(http, data, scrub=(client_secret, code))
+    return await _post_token(
+        http, data, scrub=(client_secret, code), allow_custom_host=allow_custom_host
+    )
 
 
 async def refresh(
@@ -230,8 +239,13 @@ async def refresh(
     client_id: str,
     client_secret: str,
     refresh_token: str,
+    *,
+    allow_custom_host: bool = False,
 ) -> OAuthTokens:
-    """Mint a fresh access token from a ``refresh_token`` (grant_type=refresh_token)."""
+    """Mint a fresh access token from a ``refresh_token`` (grant_type=refresh_token).
+
+    See :func:`exchange_code` for what ``allow_custom_host`` guards.
+    """
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -244,6 +258,7 @@ async def refresh(
         data,
         scrub=(client_secret, refresh_token),
         fallback_refresh=refresh_token,
+        allow_custom_host=allow_custom_host,
     )
 
 
@@ -253,6 +268,7 @@ async def _post_token(
     *,
     scrub: tuple[str, ...],
     fallback_refresh: str | None = None,
+    allow_custom_host: bool = False,
 ) -> OAuthTokens:
     """POST a form to the token endpoint and parse the result defensively."""
     try:
@@ -277,13 +293,16 @@ async def _post_token(
         raise DeputyError(msg, hint=_LOGIN_HINT) from exc
     if not isinstance(parsed, dict):
         raise DeputyError("Deputy's OAuth token response was not a JSON object.", hint=_LOGIN_HINT)
-    return _tokens_from_response(parsed, fallback_refresh=fallback_refresh)
+    return _tokens_from_response(
+        parsed, fallback_refresh=fallback_refresh, allow_custom_host=allow_custom_host
+    )
 
 
 def _tokens_from_response(
     data: dict[str, Any],
     *,
     fallback_refresh: str | None = None,
+    allow_custom_host: bool = False,
 ) -> OAuthTokens:
     """Build :class:`OAuthTokens` from a token-endpoint JSON body, tolerating gaps."""
     access = data.get("access_token")
@@ -306,6 +325,19 @@ def _tokens_from_response(
             hint="The token response shape may have changed. " + _LOGIN_HINT,
         )
     base_url = normalize_base_url(endpoint)
+    host = urlparse(base_url).hostname or ""
+    if not host.endswith(".deputy.com") and not allow_custom_host:
+        # Same fail-closed allowlist static-token mode enforces via
+        # DeputyConfig._validate_base_url: an unexpected host here would send the
+        # bearer access token to a server we do not control.
+        raise DeputyAuthError(
+            f"Deputy's OAuth response named an install host '{host}' that is not a "
+            "Deputy install ('{install}.{geo}.deputy.com'). Refusing to use it.",
+            hint=(
+                "If this is a legitimate enterprise custom domain, set "
+                "DEPUTY_ALLOW_CUSTOM_HOST=true. " + _LOGIN_HINT
+            ),
+        )
 
     return OAuthTokens(
         access_token=access,
@@ -389,7 +421,14 @@ async def run_login_flow(config: DeputyConfig, *, open_browser: bool = True) -> 
         thread.join(timeout=5)
 
     async with httpx.AsyncClient(timeout=config.timeout) as http:
-        return await exchange_code(http, client_id, client_secret, result.code, redirect_uri)
+        return await exchange_code(
+            http,
+            client_id,
+            client_secret,
+            result.code,
+            redirect_uri,
+            allow_custom_host=config.allow_custom_host,
+        )
 
 
 @dataclass

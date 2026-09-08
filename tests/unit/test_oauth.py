@@ -90,6 +90,47 @@ async def test_exchange_code_accepts_each_endpoint_spelling(endpoint_field: str)
     assert tokens.base_url == _INSTALL_ORIGIN
 
 
+async def test_exchange_code_rejects_non_deputy_host_by_default() -> None:
+    # A token response naming an install host outside *.deputy.com must be refused,
+    # same as DEPUTY_BASE_URL is in static-token mode (DeputyConfig._validate_base_url)
+    # -- otherwise the bearer access token would be sent to an attacker-controlled host.
+    body = {
+        "access_token": "acc-evil",
+        "refresh_token": "ref-evil",
+        "expires_in": 3600,
+        "endpoint": "https://acme.eu.deputy.com.evil.example/",
+    }
+    with respx.mock(assert_all_called=False) as router:
+        router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=body))
+        async with httpx.AsyncClient() as http:
+            with pytest.raises(DeputyAuthError) as excinfo:
+                await exchange_code(http, _CLIENT_ID, _CLIENT_SECRET, "the-code", _REDIRECT)
+    assert "evil.example" in str(excinfo.value)
+
+
+async def test_exchange_code_allows_non_deputy_host_when_opted_in() -> None:
+    # DEPUTY_ALLOW_CUSTOM_HOST=true (threaded in as allow_custom_host) opts back in,
+    # mirroring the static-token escape hatch.
+    body = {
+        "access_token": "acc-custom",
+        "refresh_token": "ref-custom",
+        "expires_in": 3600,
+        "endpoint": "https://deputy.acme-corp.example/",
+    }
+    with respx.mock(assert_all_called=False) as router:
+        router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=body))
+        async with httpx.AsyncClient() as http:
+            tokens = await exchange_code(
+                http,
+                _CLIENT_ID,
+                _CLIENT_SECRET,
+                "the-code",
+                _REDIRECT,
+                allow_custom_host=True,
+            )
+    assert tokens.base_url == "https://deputy.acme-corp.example"
+
+
 async def test_exchange_code_normalizes_endpoint_with_api_suffix() -> None:
     body = {
         "access_token": "acc-2",

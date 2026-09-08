@@ -81,6 +81,22 @@ deputy-mcp speaks MCP over stdio. Point your client at
 `uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp` and set the same
 `DEPUTY_*` environment variables (full list in [Configuration](#configuration)).
 
+### No admin access? Use OAuth login
+
+Still not a Deputy admin, but want the full API rather than the read-only iCal
+fallback below? Register a personal OAuth app instead:
+
+1. Open <https://once.deputy.com/my/oauth_clients> and create an app.
+2. Set its redirect URI to exactly `http://localhost:8823/callback`.
+3. Set `DEPUTY_OAUTH_CLIENT_ID` and `DEPUTY_OAUTH_CLIENT_SECRET` from that app.
+4. Run `deputy-mcp login` — it opens your browser, you approve, and the resulting
+   access/refresh token pair is saved to `~/.deputy-mcp/token.json` (override the
+   location with `DEPUTY_TOKEN_STORE`).
+
+This unlocks the same full `/my/*` surface as a static admin token, refreshing the
+access token automatically as it expires. Run `deputy-mcp logout` to remove the
+stored token.
+
 ### No token? Use your calendar feed
 
 Not a Deputy admin? Every employee has a personal iCal feed of their own roster, and
@@ -164,20 +180,32 @@ traffic is HTTPS to your own Deputy install (or your personal iCal feed); nothin
 passes through a third party. deputy-mcp does exactly what your Deputy token can do,
 no more — the token is held in memory, redacted from logs, and never printed.
 
+OAuth mode (`deputy-mcp login`) additionally persists the access/refresh token pair
+to `~/.deputy-mcp/token.json` (override with `DEPUTY_TOKEN_STORE`), written with
+owner-only `0600` permissions where the OS supports them. The login flow itself never
+logs or prints the authorization code, access token, refresh token, or client secret —
+only progress messages and, on success, the token's expiry; `deputy-mcp logout`
+deletes the stored file.
+
 ---
 
 ## Configuration
 
 All settings are `DEPUTY_*` environment variables. Provide **one** credential set:
-`DEPUTY_API_TOKEN` + `DEPUTY_BASE_URL` for the full API, or `DEPUTY_CALENDAR_URL`
-alone for iCal mode. Copy [`.env.example`](.env.example) to `.env` and fill it in
-(never commit `.env`).
+`DEPUTY_API_TOKEN` + `DEPUTY_BASE_URL` for the full API, `DEPUTY_OAUTH_CLIENT_ID` +
+`DEPUTY_OAUTH_CLIENT_SECRET` (via `deputy-mcp login`) for the same API without an
+admin token, or `DEPUTY_CALENDAR_URL` alone for iCal mode. Copy
+[`.env.example`](.env.example) to `.env` and fill it in (never commit `.env`).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DEPUTY_API_TOKEN` | API mode | — | Deputy permanent or OAuth access token (stored redacted). |
 | `DEPUTY_BASE_URL` | API mode | — | Your install origin, e.g. `https://your-company.eu.deputy.com`. |
 | `DEPUTY_CALENDAR_URL` | iCal mode | — | Your personal iCal feed URL (token-free, roster-only, stored redacted). |
+| `DEPUTY_OAUTH_CLIENT_ID` | OAuth mode | — | Client id of a personal OAuth app registered at once.deputy.com/my/oauth_clients. |
+| `DEPUTY_OAUTH_CLIENT_SECRET` | OAuth mode | — | Client secret for the same app (stored redacted, never logged). |
+| `DEPUTY_TOKEN_STORE` | No | `~/.deputy-mcp/token.json` | Where `deputy-mcp login` persists the OAuth access/refresh token pair. |
+| `DEPUTY_OAUTH_REDIRECT_PORT` | No | `8823` | Loopback port for the `deputy-mcp login` browser callback. |
 | `DEPUTY_ALLOW_WRITES` | No | `false` | Enable the write tools. |
 | `DEPUTY_ALLOW_CUSTOM_HOST` | No | `false` | Allow a base URL host outside `*.deputy.com` (enterprise custom domains). |
 | `DEPUTY_CACHE_TTL` | No | `30` | In-memory read-cache lifetime, seconds. `0` disables caching. |

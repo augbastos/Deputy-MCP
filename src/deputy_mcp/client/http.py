@@ -250,7 +250,11 @@ class DeputyHTTP:
             try:
                 async with httpx.AsyncClient(timeout=self._config.timeout) as http:
                     new_tokens = await oauth.refresh(
-                        http, client_id, client_secret, current.refresh_token
+                        http,
+                        client_id,
+                        client_secret,
+                        current.refresh_token,
+                        allow_custom_host=self._config.allow_custom_host,
                     )
             except DeputyAuthError:
                 raise
