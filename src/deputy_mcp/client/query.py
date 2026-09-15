@@ -1,7 +1,7 @@
 """Deputy Resource-API QUERY DSL builder and pagination helper.
 
 Deputy's ``POST /api/v1/resource/{Object}/QUERY`` is the primary read mechanism. This
-module builds the exact JSON body documented in ``deputy-api-read.md`` and paginates
+module builds the exact JSON body Deputy's Resource API documents and paginates
 around the hard 500-record-per-response cap. It never touches ``httpx`` directly: the
 transport is passed in and used through the small :class:`_HTTPRequester` protocol, so
 this module stays reusable and cheap to unit-test.

@@ -421,12 +421,13 @@ def render_whoami(
     tz_label: str,
     *,
     clocked_in: bool | None = None,
-    calendar_url: str | None = None,
+    calendar_feed: bool | None = None,
 ) -> str:
     """Render the WhoAmI + company sanity-check summary.
 
     ``clocked_in`` adds a live "on the clock" line (from ``/me``'s in-progress timesheet)
-    when provided; ``calendar_url`` adds the personal iCal subscription link when present.
+    when provided; ``calendar_feed`` says whether a personal feed exists. The feed link
+    itself is a secret and is only ever rendered by :func:`render_calendar_url`.
     """
     extra = getattr(who, "model_extra", None) or {}
     name = extra.get("Name") or extra.get("DisplayName") or extra.get("FirstName") or "unknown"
@@ -442,8 +443,9 @@ def render_whoami(
     ]
     if clocked_in is not None:
         lines.append(f"- Clocked in now: {'yes' if clocked_in else 'no'}")
-    if calendar_url:
-        lines.append(f"- Calendar feed (iCal subscription): {calendar_url}")
+    if calendar_feed is not None:
+        state = "available (deputy_get_my_calendar_url)" if calendar_feed else "not available"
+        lines.append(f"- Personal calendar feed: {state}")
     return "\n".join(lines)
 
 
@@ -457,7 +459,8 @@ def render_calendar_url(url: str | None) -> str:
     return (
         "### My calendar feed\n\n"
         "Add this iCal subscription link to your calendar app (Google Calendar, Apple "
-        "Calendar, Outlook) to see your shifts:\n\n"
+        "Calendar, Outlook) to see your shifts. Keep it private: anyone with the link can "
+        "read your roster.\n\n"
         f"- {url}"
     )
 

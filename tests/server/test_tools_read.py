@@ -119,7 +119,7 @@ async def test_whoami_reports_clocked_in_and_calendar(
     make_timesheet: PayloadFactory,
     sample_employees: list[dict[str, Any]],
 ) -> None:
-    """/me's InProgressTS + CalendarURL enrich whoami with clock state and the iCal feed."""
+    """/me's InProgressTS + CalendarURL enrich whoami, but the private feed link stays out."""
     cal = "https://cloud-nine-cafe.eu.deputy.com/ical/abc123.ics"
     wire_read_api(
         deputy_api,
@@ -135,10 +135,11 @@ async def test_whoami_reports_clocked_in_and_calendar(
         md = tool_text(await client.call_tool("deputy_whoami", {}))
         js = tool_text(await client.call_tool("deputy_whoami", {"response_format": "json"}))
     assert "Clocked in now: yes" in md
-    assert cal in md
+    assert "Personal calendar feed: available" in md
+    assert cal not in md and cal not in js
     parsed = json.loads(js)
     assert parsed["clocked_in"] is True
-    assert parsed["calendar_url"] == cal
+    assert parsed["calendar_feed_available"] is True
 
 
 async def test_get_my_calendar_url_returns_link(

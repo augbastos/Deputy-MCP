@@ -1,6 +1,6 @@
 """Unit tests for :mod:`deputy_mcp.client.query`.
 
-Covers the exact QUERY body shape documented in ``deputy-api-read.md`` (search slots,
+Covers the exact QUERY body shape Deputy's Resource API documents (search slots,
 sort, join, max, start), operator/argument validation, and ``query_all`` pagination
 around the hard 500-record cap using a lightweight fake transport.
 """

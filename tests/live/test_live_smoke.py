@@ -8,8 +8,8 @@ Credentials come from the environment or a ``.env`` file (``DEPUTY_ENV_FILE`` or
 ``.env`` in the working directory). Without them every test here SKIPS. All calls are
 strictly read-only; assertions are structural so no personal data ends up in test output.
 
-These probes target the endpoints a real token actually reaches (see
-``smoke-findings.md``): ``/api/v1/me`` (not ``/resource/Account/WhoAmI``), the future-only
+These probes target the endpoints a real token actually reaches, as observed against a
+live install: ``/api/v1/me`` (not ``/resource/Account/WhoAmI``), the future-only
 bare-array ``/my/roster`` and ``/my/timesheets``. Manager/admin-only reads are asserted to
 ACCEPT EITHER real data (an admin/manager token) OR a clean :class:`DeputyPermissionError`
 (a plain employee token, which 403s "Access to object-type denied"), so this suite passes

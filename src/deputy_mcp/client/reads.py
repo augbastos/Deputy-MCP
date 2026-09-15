@@ -6,7 +6,7 @@ Resource ``/QUERY`` DSL (:mod:`deputy_mcp.client.query`) and paginate past the
 the transport directly. All reads are marked ``cacheable`` so repeated tool
 calls within the short cache TTL do not re-hit Deputy.
 
-Time semantics follow the read notes: ``StartTime``/``EndTime`` are unix UTC
+Time semantics: ``StartTime``/``EndTime`` are unix UTC
 seconds (compared as strings in QUERY bodies), while ``Date`` is the local
 business-day string (``YYYY-MM-DD``) used for calendar-range filtering.
 
@@ -57,9 +57,10 @@ __all__ = [
 #: (both the QUERY ``join`` sent here and the key the response is read back under, in
 #: :mod:`deputy_mcp.render`). Re-exported from :mod:`deputy_mcp.client` as the client's
 #: public surface so consumers never deep-import this mixin module. "EmployeeObject" is
-#: the documented example name but the join/assoc naming is a smoke-test gap in the API
-#: notes (deputy-api-read.md §1.1) and MUST be confirmed against a live install; keeping
-#: it in one place means a correction propagates to every send/parse site at once.
+#: Deputy's documented example name. The join is only used on manager/admin QUERY paths,
+#: which an employee-level live run could not exercise (Roster/INFO is not reachable at
+#: that level), so the live suite probes it for manager tokens; keeping it in one place
+#: means a correction propagates to every send/parse site at once.
 EMPLOYEE_JOIN = "EmployeeObject"
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -269,7 +270,7 @@ class ReadsMixin:
         try:
             clocked_records = await query_all(self._http, "Timesheet", clocked_builder)
 
-            # Published filter excludes draft shifts (deputy-api-read.md §5 Strategy B):
+            # The Published filter excludes draft shifts:
             # a drafted-but-unpublished shift is not really "scheduled on" right now.
             rostered_builder = (
                 QueryBuilder()

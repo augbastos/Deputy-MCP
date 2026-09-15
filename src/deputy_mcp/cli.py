@@ -160,7 +160,10 @@ async def _cmd_whoami(client: DeputyClient, as_json: bool) -> None:
     except DeputyError:
         company = None
     if as_json:
-        _emit_json({"whoami": who, "company": company})
+        # The raw /me record, minus the personal calendar feed link: it carries a token,
+        # and terminal output ends up in shell history, logs and agent transcripts.
+        record = {k: v for k, v in who.model_dump(mode="json").items() if k != "CalendarURL"}
+        _emit_json({"whoami": record, "company": company})
         return
     extra = who.model_extra or {}
     name = extra.get("Name") or extra.get("DisplayName") or "(unknown user)"
@@ -336,7 +339,8 @@ def _serve() -> int:
     except DeputyError as exc:
         _fail(exc)
         return 1
-    server.run(transport="stdio")
+    # stdout is the protocol channel; keep stderr to our one status line (no banner).
+    server.run(transport="stdio", show_banner=False)
     return 0
 
 

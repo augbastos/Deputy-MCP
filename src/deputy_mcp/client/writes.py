@@ -8,7 +8,7 @@ disabled, so a misconfigured deployment can never mutate a live install by accid
 After any successful write the shared read cache is invalidated (Deputy is real-time;
 a stale roster/timesheet would mislead the next read).
 
-Permission reality (see ``deputy-api-write.md`` §5): these are ``/supervise`` manager
+Permission reality: these are ``/supervise`` manager
 endpoints plus generic Resource writes. The token inherits the permissions of the
 Deputy user who created it. When that user cannot perform an action Deputy returns
 HTTP 403, which the transport maps to :class:`DeputyPermissionError` -- every method's
@@ -41,7 +41,7 @@ __all__ = ["WritesMixin"]
 _ModelT = TypeVar("_ModelT", bound=DeputyModel)
 
 #: RosterSwap.Status = 4 (Pending Approval): submitted and awaiting a manager, who
-#: advances it to 5 (Approved). See deputy-api-write.md §2 for the full code table.
+#: advances it to 5 (Approved). The full code table is on :class:`RosterSwap`.
 _SWAP_STATUS_PENDING_APPROVAL = 4
 
 #: Valid iCal RRULE FREQ values Deputy accepts for recurring unavailability.
@@ -106,7 +106,7 @@ class WritesMixin:
         Deputy exposes **no** employee-facing "claim/accept open shift" API endpoint.
         The documented way to fill an open roster is to update it: ``POST
         /supervise/roster`` with ``intRosterId`` set, ``intRosterEmployee`` set to the
-        claimant, and ``blnOpen: 0`` to clear the open flag (deputy-api-write.md §1b).
+        claimant, and ``blnOpen: 0`` to clear the open flag.
         This bypasses the UI's employee-request workflow, so it needs a token whose
         Deputy user may edit that roster.
 
@@ -158,7 +158,7 @@ class WritesMixin:
     async def request_shift_swap(self, roster_id: int, note: str | None = None) -> RosterSwap:
         """Create a shift-swap request for one of the current user's shifts.
 
-        Modelled by the ``RosterSwap`` resource (deputy-api-write.md §2). There is no
+        Modelled by the ``RosterSwap`` resource. There is no
         dedicated swap "submit" action endpoint, so the record is created via the
         generic Resource API with ``Status = 4`` (Pending Approval). A manager drives
         later transitions (``5`` Approved / ``7`` Declined); the exact accept/approve
@@ -204,7 +204,7 @@ class WritesMixin:
     ) -> Unavailability:
         """Record an unavailability window for the current user.
 
-        ``POST /supervise/unavail`` with the documented shape (deputy-api-write.md §3):
+        ``POST /supervise/unavail`` with the documented shape:
         ``start``/``end`` are **objects** wrapping a Unix-seconds ``timestamp`` string,
         ``intAssignedEmployeeId`` is the target employee, and
         ``blnSubmitSuperUnavail: true`` submits it as an approved unavailability.
@@ -254,7 +254,7 @@ class WritesMixin:
         """Clock the current user in, starting a live timesheet.
 
         ``POST /supervise/timesheet/start`` needs only ``intEmployeeId`` and
-        ``intOpunitId`` -- a roster is optional (deputy-api-write.md §4). If
+        ``intOpunitId`` -- a roster is optional. If
         ``opunit_id`` is omitted this resolves the area automatically **only** when the
         install has exactly one rosterable area; otherwise it raises so the caller must
         name the area (clocking into the wrong location is a real-world hazard).
@@ -295,7 +295,7 @@ class WritesMixin:
         """Clock out, ending a live timesheet.
 
         ``POST /supervise/timesheet/end`` keyed by ``intTimesheetId``, with optional
-        ``intMealbreakMinute`` (deputy-api-write.md §4). When ``timesheet_id`` is
+        ``intMealbreakMinute``. When ``timesheet_id`` is
         omitted, the current user's in-progress timesheet is read from ``InProgressTS`` on
         ``GET /api/v1/me`` (which a plain employee token can reach, unlike
         ``Timesheet/QUERY``); a clear error is raised when the caller is not clocked in.

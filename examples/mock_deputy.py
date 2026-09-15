@@ -6,11 +6,14 @@ next / areas / timesheets) can be exercised end-to-end with no real Deputy
 account and no network egress. The data is FICTIONAL (Cloud Nine Cafe; Alex
 Rivera, Sam O'Brien, Jo Murphy) and mirrors the shapes in ``tests/fixtures/``.
 
-It implements just enough of the API for the read CLI:
+It implements just enough of the API for the read CLI and the read MCP tools:
 
-* ``GET  /api/v1/resource/Account/WhoAmI`` (and ``/api/v1/me`` fallback)
+* ``GET  /api/v1/me`` (and the legacy ``/api/v1/resource/Account/WhoAmI``)
+* ``GET  /api/v1/my/roster``, ``/my/timesheets``, ``/my/colleague`` -- the
+  self-service endpoints any employee token reaches, answered as Alex Rivera
 * ``GET  /api/v1/resource/Employee/{id}``
 * ``POST /api/v1/resource/{Object}/QUERY`` -- the search/sort/join/paginate DSL
+  (the manager/admin path)
 
 Shift and timesheet times are generated relative to "now" at startup so that
 "who is working" and "next shift" return live, meaningful results whenever it
@@ -273,14 +276,49 @@ def _timesheet(
     }
 
 
-WHOAMI = {
+#: The signed-in demo user: Alex Rivera (employee 101), clocked in on timesheet 7001.
+ME_EMPLOYEE_ID = 101
+
+WHOAMI: dict[str, Any] = {
     "UserId": 201,
-    "EmployeeId": 101,
+    "EmployeeId": ME_EMPLOYEE_ID,
     "Name": "Alex Rivera",
     "Company": 1,
     "CompanyName": "Cloud Nine Cafe",
+    "InProgressTS": 7001,
     "Permissions": {},
 }
+
+#: Colleagues as /my/colleague returns them. The contact fields are fictional and exist
+#: so the demo shows that the colleague tool never surfaces them.
+COLLEAGUES = [
+    {
+        "DisplayName": "Sam O'Brien",
+        "EmpId": 102,
+        "Company": 1,
+        "IsSameWorkplace": True,
+        "IsSubordinate": False,
+        "Email": "sam.obrien@example.com",
+    },
+]
+
+
+def my_records(dataset: dict[str, list[dict[str, Any]]], kind: str) -> list[dict[str, Any]]:
+    """The demo user's own rosters or timesheets, shaped like Deputy's /my/* responses.
+
+    Deputy's /my/roster is future-only and embeds the area as ``OperationalUnitObject``.
+    """
+    now = int(datetime.now(UTC).timestamp())
+    units = {unit["Id"]: unit for unit in dataset["OperationalUnit"]}
+    records = []
+    for record in dataset[kind]:
+        if record.get("Employee") != ME_EMPLOYEE_ID:
+            continue
+        if kind == "Roster" and (record.get("EndTime") or 0) <= now:
+            continue
+        unit = units.get(record.get("OperationalUnit"))
+        records.append({**record, "OperationalUnitObject": unit} if unit else record)
+    return records
 
 
 # --------------------------------------------------------------------------- #
@@ -384,7 +422,16 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # method name fixed by BaseHTTPRequestHandler
         path = urlparse(self.path).path
         if path in ("/api/v1/resource/Account/WhoAmI", "/api/v1/me"):
-            self._send(WHOAMI)
+            self._send({**WHOAMI, "CompanyObject": self.dataset["Company"][0]})
+            return
+        if path == "/api/v1/my/roster":
+            self._send(my_records(self.dataset, "Roster"))
+            return
+        if path == "/api/v1/my/timesheets":
+            self._send(my_records(self.dataset, "Timesheet"))
+            return
+        if path == "/api/v1/my/colleague":
+            self._send(COLLEAGUES)
             return
         prefix = "/api/v1/resource/Employee/"
         if path.startswith(prefix) and path[len(prefix) :].isdigit():

@@ -1,6 +1,6 @@
 """Pure accessors over a Deputy ``/api/v1/me`` (WhoAmI) response.
 
-The live smoke run (``smoke-findings.md``) confirmed that ``GET /api/v1/me`` is the
+Running against a live install confirmed that ``GET /api/v1/me`` is the
 "who am I" call that works for ANY access level, and that its useful values live at the
 top level or in embedded objects: ``EmployeeId`` (int), ``CompanyObject`` (with
 ``CompanyName``/timezone), ``InProgressTS`` (the caller's running timesheet),

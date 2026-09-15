@@ -3,7 +3,7 @@
 Deputy returns fields in PascalCase (``Id``, ``FirstName``, ``StartTime``) and
 frequently ships extra fields that are not documented. Every model therefore uses
 ``extra="allow"`` so nothing is silently dropped, and declares only the fields whose
-names and types are documented in ``deputy-api-read.md`` / ``deputy-api-write.md``.
+names and types Deputy's Resource API documents.
 Anything undocumented remains reachable via the model's extra attributes.
 
 Timestamp semantics (see the read notes, "Date/time & timezone semantics"):
@@ -164,9 +164,8 @@ class Colleague(DeputyModel):
     legal) breach the tool must not commit. ``IsSameWorkplace`` marks colleagues at the
     caller's own location; ``IsSubordinate`` marks the caller's direct reports; ``EmpId``
     -> Employee.Id. ``Status`` is an integer code (its exact mapping is install-dependent
-    and not documented, so it is passed through, not interpreted). ``Company`` carries the
-    workplace label as returned by this endpoint — its exact type is a smoke-test gap and
-    should be confirmed against a live install; it is not rendered either way.
+    and not documented, so it is passed through, not interpreted). ``Company`` is the
+    workplace's location id (an integer on a live install); it is not rendered.
     """
 
     DisplayName: str | None = None

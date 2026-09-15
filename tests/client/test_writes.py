@@ -1,5 +1,5 @@
 """Client write-method tests: the write gate, exact documented payloads, cache
-invalidation and adversarial permission/edge cases per deputy-api-write.md.
+invalidation and adversarial permission/edge cases of Deputy's write endpoints.
 
 Coverage spans (1) every write raising :class:`DeputyWritesDisabledError` before any
 HTTP call when ``DEPUTY_ALLOW_WRITES`` is false, (2) the paths that do NOT resolve the

@@ -2,7 +2,7 @@
 
 Every read method on :class:`~deputy_mcp.client.DeputyClient` is exercised against a
 respx-mocked Deputy install. The endpoints mirror what a live employee token actually
-reaches (``smoke-findings.md``):
+reaches (confirmed against a live install):
 
 * ``whoami`` -> ``GET /api/v1/me`` (top-level ``EmployeeId``, embedded ``CompanyObject``,
   ``InProgressTS``, ``CalendarURL``); the documented ``/resource/Account/WhoAmI`` is only

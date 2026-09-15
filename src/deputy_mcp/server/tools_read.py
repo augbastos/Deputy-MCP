@@ -126,19 +126,19 @@ def register(
 
         Returns who the API token authenticates as, the company/location and its timezone,
         whether that user is clocked in right now (from their in-progress timesheet), and
-        their personal iCal calendar subscription URL when the install exposes one. Run
-        this first to confirm setup before other tools.
+        whether a personal calendar feed exists. Run this first to confirm setup before
+        other tools.
 
         When NOT to use: to read schedules or people (use deputy_get_my_roster or
         deputy_get_employee_info) — this only checks the connection and identity.
 
         Returns markdown (a connection summary: signed-in name, company, timezone, whether
-        clocked in, and the calendar feed) or, with response_format="json", the same facts
-        as ``{"name", "employee_id", "company_name", "timezone", "clocked_in",
-        "calendar_url"}`` where ``clocked_in`` is a bool and ``employee_id`` /
-        ``calendar_url`` may be null. The raw /me record is never returned. In iCal mode
-        there is no API identity, so this reports mode=iCal and that only your roster is
-        available.
+        clocked in, calendar feed availability) or, with response_format="json", the same
+        facts as ``{"name", "employee_id", "company_name", "timezone", "clocked_in",
+        "calendar_feed_available"}`` where the last two are bools and ``employee_id`` may be
+        null. Neither the raw /me record nor the private feed link is returned (use
+        deputy_get_my_calendar_url when the user asks for the link). In iCal mode there is
+        no API identity, so this reports mode=iCal and that only your roster is available.
         """
         if mode == "ical":
             data = {
@@ -160,7 +160,7 @@ def register(
                 company = None
             _, tz_label = resolve_timezone(company)
             clocked_in = whoami_is_clocked_in(who)
-            calendar_url = whoami_calendar_url(who)
+            has_feed = whoami_calendar_url(who) is not None
             company_name = (
                 company.CompanyName or company.TradingName if company is not None else None
             ) or whoami_company_name(who)
@@ -176,12 +176,12 @@ def register(
                 "company_name": company_name,
                 "timezone": tz_label,
                 "clocked_in": clocked_in,
-                "calendar_url": calendar_url,
+                "calendar_feed_available": has_feed,
             }
             return render(
                 data,
                 lambda: render_whoami(
-                    who, company, tz_label, clocked_in=clocked_in, calendar_url=calendar_url
+                    who, company, tz_label, clocked_in=clocked_in, calendar_feed=has_feed
                 ),
                 response_format,
             )
@@ -197,7 +197,9 @@ def register(
         Deputy publishes a per-user, read-only iCal feed of your roster (the CalendarURL
         on /api/v1/me). Add the returned link to any calendar app (Google Calendar, Apple
         Calendar, Outlook) to see your shifts there; it stays in sync as your roster
-        changes. Works at any access level — it reads only your own /me record.
+        changes. Works at any access level — it reads only your own /me record. The link
+        is private (anyone holding it can read the roster), so only call this when the user
+        asks for it, and never repeat it anywhere else.
 
         When NOT to use: to read the shifts themselves here (use deputy_get_my_roster or
         deputy_next_shift) — this only returns the subscription link.

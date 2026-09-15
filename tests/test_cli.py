@@ -309,8 +309,9 @@ def test_serve_runs_server_without_stdout(
     recorded: dict[str, Any] = {}
 
     class _FakeServer:
-        def run(self, transport: str) -> None:
+        def run(self, transport: str, show_banner: bool = True) -> None:
             recorded["transport"] = transport
+            recorded["show_banner"] = show_banner
 
     monkeypatch.setattr(server_pkg, "create_server", lambda: _FakeServer())
 
