@@ -36,10 +36,10 @@ jobs:
           fetch-depth: 0
 
       - id: seal
-        # Pinned to the published tag, not `./`, on purpose: the bytes that decide the
-        # verdict must not come from the pull request being judged. A contributor who
-        # could edit the action in their PR could edit the gate that judges it.
-        uses: augbastos/scpe@v0.2.3
+        # Pinned to the published release's commit, not `./`, on purpose: the bytes that
+        # decide the verdict must not come from the pull request being judged. A contributor
+        # who could edit the action in their PR could edit the gate that judges it.
+        uses: augbastos/scpe@b98b50e429a7de2340b78c3c14e5c16dffe6e408  # v0.2.3
         with:
           level: "1"                   # AI-disclosure lint. See the note at the top.
           require: "true"              # a gate, not a report: no disclosure = failing check

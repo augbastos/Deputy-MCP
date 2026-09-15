@@ -58,6 +58,7 @@ dev = [
     "respx>=0.22",
     "ruff>=0.6",
     "mypy>=1.11",
+    "pytest-cov>=6",
 ]
 
 [build-system]
@@ -69,6 +70,19 @@ path = "src/deputy_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deputy_mcp"]
+
+[tool.hatch.build.targets.sdist]
+# An explicit allowlist: a local checkout also holds virtualenvs, caches and a
+# gitignored .env, and none of that may ever end up in a published archive.
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/pyproject.toml",
+    "/uv.lock",
+]
 
 [tool.ruff]
 line-length = 100
@@ -83,9 +97,16 @@ python_version = "3.11"
 strict = true
 files = ["src"]
 
-[[tool.mypy.overrides]]
-module = "fastmcp.*"
-ignore_missing_imports = true
+[tool.coverage.run]
+source = ["deputy_mcp"]
+branch = true
+
+[tool.coverage.report]
+# Measured at 91% branch coverage when the gate was set; the margin absorbs
+# platform-specific branches (e.g. POSIX permission bits) without inviting filler tests.
+fail_under = 88
+show_missing = true
+skip_covered = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

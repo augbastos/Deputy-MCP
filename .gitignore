@@ -5,10 +5,13 @@ __pycache__/
 dist/
 build/
 .venv/
+.venv*/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # Environment — never commit real credentials
