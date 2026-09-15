@@ -9,6 +9,7 @@ actionable string, never a traceback.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -16,6 +17,8 @@ import httpx
 import pytest
 import respx
 from fastmcp import Client
+from fastmcp.client.elicitation import ElicitResult
+from mcp.shared.exceptions import MCPError
 
 from deputy_mcp.server import create_server
 
@@ -92,7 +95,84 @@ async def test_write_tools_marked_not_read_only(writes_env: dict[str, str]) -> N
 # --------------------------------------------------------------------------- #
 # Each write tool is callable when enabled
 # --------------------------------------------------------------------------- #
-async def test_claim_open_shift(
+async def _decline(message: str, response_type: Any, params: Any, context: Any) -> ElicitResult:
+    return ElicitResult(action="decline")
+
+
+# ``auto`` negotiates MCP 2026-07-28 (guard pattern); ``legacy`` stays on the handshake era.
+_ERAS = pytest.mark.parametrize("mode", ["auto", "legacy"])
+
+
+@_ERAS
+async def test_claim_open_shift_runs_only_after_the_user_approves(
+    mode: str,
+    writes_env: dict[str, str],
+    deputy_api: respx.MockRouter,
+    make_whoami: Any,
+    make_company: Any,
+    make_timesheet: Any,
+) -> None:
+    _wire(deputy_api, make_whoami, make_company, make_timesheet)
+    prompts: list[str] = []
+
+    async def approve(message: str, response_type: Any, params: Any, context: Any) -> Any:
+        prompts.append(message)
+        return {"value": True}
+
+    server = create_server()
+    async with Client(server, mode=mode, elicitation_handler=approve) as client:
+        result = await client.call_tool("deputy_claim_open_shift", {"shift_id": 9001})
+    text = tool_text(result)
+    assert not result.is_error
+    assert "Open shift 9001 claimed" in text
+    assert deputy_api.routes["claim"].call_count == 1
+    # The user saw which shift, when, and that approval is skipped.
+    assert len(prompts) == 1
+    assert "#9001" in prompts[0] and "2021-01-01" in prompts[0]
+    assert "manager approval" in prompts[0]
+
+
+@_ERAS
+async def test_declined_claim_changes_nothing(
+    mode: str,
+    writes_env: dict[str, str],
+    deputy_api: respx.MockRouter,
+    make_whoami: Any,
+    make_company: Any,
+    make_timesheet: Any,
+) -> None:
+    _wire(deputy_api, make_whoami, make_company, make_timesheet)
+    server = create_server()
+    async with Client(server, mode=mode, elicitation_handler=_decline) as client:
+        result = await client.call_tool(
+            "deputy_claim_open_shift", {"shift_id": 9001, "response_format": "json"}
+        )
+    assert json.loads(tool_text(result)) == {
+        "shift_id": 9001,
+        "claimed": False,
+        "reason": "declined",
+    }
+    assert deputy_api.routes["claim"].call_count == 0
+
+
+async def test_handshake_client_without_elicitation_cannot_claim(
+    writes_env: dict[str, str],
+    deputy_api: respx.MockRouter,
+    make_whoami: Any,
+    make_company: Any,
+    make_timesheet: Any,
+) -> None:
+    _wire(deputy_api, make_whoami, make_company, make_timesheet)
+    server = create_server()
+    async with Client(server, mode="legacy") as client:
+        result = await client.call_tool("deputy_claim_open_shift", {"shift_id": 9001})
+    text = tool_text(result)
+    assert "was not claimed" in text
+    assert "does not support elicitation" in text
+    assert deputy_api.routes["claim"].call_count == 0
+
+
+async def test_modern_client_without_elicitation_cannot_claim(
     writes_env: dict[str, str],
     deputy_api: respx.MockRouter,
     make_whoami: Any,
@@ -102,11 +182,35 @@ async def test_claim_open_shift(
     _wire(deputy_api, make_whoami, make_company, make_timesheet)
     server = create_server()
     async with Client(server) as client:
+        # The server asks for input; a client that cannot elicit refuses the round.
+        with pytest.raises(MCPError):
+            await client.call_tool("deputy_claim_open_shift", {"shift_id": 9001})
+    assert deputy_api.routes["claim"].call_count == 0
+
+
+async def test_claiming_a_shift_that_is_not_open_never_prompts(
+    writes_env: dict[str, str],
+    deputy_api: respx.MockRouter,
+    make_whoami: Any,
+    make_company: Any,
+    make_timesheet: Any,
+) -> None:
+    _wire(deputy_api, make_whoami, make_company, make_timesheet)
+    deputy_api.get(path__regex=r"/resource/Roster/\d+$").mock(
+        return_value=httpx.Response(200, json={"Id": 9001, "Open": False, "Employee": 102})
+    )
+    prompted: list[str] = []
+
+    async def spy(message: str, response_type: Any, params: Any, context: Any) -> Any:
+        prompted.append(message)
+        return {"value": True}
+
+    server = create_server()
+    async with Client(server, elicitation_handler=spy) as client:
         result = await client.call_tool("deputy_claim_open_shift", {"shift_id": 9001})
-    text = tool_text(result)
-    assert not result.is_error
-    assert "9001" in text
-    assert "claimed" in text.lower()
+    assert "not an open shift" in tool_text(result)
+    assert prompted == []
+    assert deputy_api.routes["claim"].call_count == 0
 
 
 async def test_request_shift_swap(

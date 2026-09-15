@@ -12,10 +12,16 @@ dual markdown/JSON rendering via :mod:`deputy_mcp.server.formatting`. A raw trac
 is never returned to the model: any :class:`~deputy_mcp.client.errors.DeputyError`
 becomes a short, actionable string.
 
-Tool annotations (MCP hints, per the design): ``readOnlyHint=false`` (they change
-state), ``destructiveHint=false`` (they create/assign, never delete),
-``idempotentHint=false`` (calling twice is not a no-op -- e.g. two clock-ins), and
-``openWorldHint=true`` (they reach an external system, the Deputy install).
+Tool annotations (MCP hints): ``readOnlyHint=false`` (they change state),
+``destructiveHint=false`` (they create/assign, never delete), ``idempotentHint=false``
+(calling twice is not a no-op -- e.g. two clock-ins), and ``openWorldHint=true`` (they
+reach an external system, the Deputy install).
+
+Only ``deputy_claim_open_shift`` asks the user to confirm through MCP elicitation
+(:mod:`deputy_mcp.server._confirm`), because it is the one action that skips a Deputy
+approval step. Clock in/out and unavailability act on the user's own record and are
+routine, and a swap request only *submits* something a manager still approves, so an
+extra prompt there would add friction without adding protection.
 """
 
 from __future__ import annotations
@@ -24,12 +30,15 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
+from fastmcp import Context
+from mcp.types import InputRequiredResult
 from pydantic import Field
 
 from deputy_mcp.client.errors import DeputyError
 from deputy_mcp.sanitize import redact
+from deputy_mcp.server._confirm import confirm
 from deputy_mcp.server.formatting import ResponseFormat, fmt_ts, render
-from deputy_mcp.server.tools_read import resolve_client_timezone
+from deputy_mcp.server.tools_read import _FORMAT_FIELD, resolve_client_timezone
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -93,32 +102,51 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             int,
             Field(description="Roster.Id of the open (unassigned) shift to take.", gt=0),
         ],
-        response_format: ResponseFormat = "markdown",
-    ) -> str:
-        """Assign the signed-in user to an open shift.
+        ctx: Context,
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
+    ) -> str | InputRequiredResult:
+        """Assign the signed-in user to an open shift, after the user confirms it.
 
         Deputy has **no** employee "accept open shift" API, so this fills the open
         roster by updating it (sets the employee, clears the open flag). It therefore
         needs a token whose Deputy user may edit that shift and it **bypasses** any
         "open shift with approval" request flow -- the assignment is applied directly.
+        Because of that, the tool first shows the shift to the user and asks them to
+        approve it through the MCP client (elicitation); nothing changes unless they
+        accept, and clients without elicitation support cannot claim shifts.
 
-        When NOT to use: to *offer* a shift to others, or when a manager must approve
-        pick-ups (that pathway is UI-only and not exposed here).
+        When NOT to use: to *offer* one of your own shifts to others (use
+        deputy_request_shift_swap), or when a manager must approve pick-ups (that
+        pathway is UI-only and not exposed here).
 
-        Returns markdown (a confirmation; Deputy returns an empty body on success, so
-        re-read the roster to verify it stuck) or, with response_format="json", the
-        object ``{"shift_id", "claimed"}``.
-
-        Args:
-            shift_id: The open shift's ``Roster.Id``.
-            response_format: ``markdown`` (default) or ``json``.
+        Returns markdown (a confirmation, or why nothing was claimed; Deputy returns an
+        empty body on success, so re-read the roster to verify it stuck) or, with
+        response_format="json", the object ``{"shift_id", "claimed", "reason"}``.
         """
         try:
             client = get_client()
+            shift = await client.get_open_shift(shift_id)
+            tz, tz_label = await resolve_client_timezone(client)
+            decision = await confirm(
+                ctx,
+                _claim_prompt(
+                    shift_id, fmt_ts(shift.StartTime, tz), fmt_ts(shift.EndTime, tz), tz_label
+                ),
+                action_id=f"claim-open-shift:{shift_id}",
+            )
+            if not isinstance(decision, str):
+                return decision  # 2026-07-28: the client asks the user and calls again
+            if decision != "approved":
+                data: dict[str, Any] = {
+                    "shift_id": shift_id,
+                    "claimed": False,
+                    "reason": decision,
+                }
+                return render(data, lambda: _md_not_claimed(data), response_format)
             await client.claim_open_shift(shift_id)
         except DeputyError as exc:
             return _format_error(exc)
-        data: dict[str, Any] = {"shift_id": shift_id, "claimed": True}
+        data = {"shift_id": shift_id, "claimed": True, "reason": None}
         return render(data, lambda: _md_claim(data), response_format)
 
     @mcp.tool(
@@ -134,7 +162,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             str | None,
             Field(description="Optional message stored with the swap request.", max_length=500),
         ] = None,
-        response_format: ResponseFormat = "markdown",
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Offer one of the signed-in user's shifts up for swap, pending approval.
 
@@ -197,7 +225,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 ),
             ),
         ] = None,
-        response_format: ResponseFormat = "markdown",
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Record an unavailability window for the signed-in user.
 
@@ -254,21 +282,22 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
                 gt=0,
             ),
         ] = None,
-        response_format: ResponseFormat = "markdown",
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Clock the signed-in user in, starting a live timesheet.
 
-        Starts an unscheduled timesheet against the given area. If ``area_id`` is
+        Starts an unscheduled timesheet against the given area, now. If ``area_id`` is
         omitted it is auto-resolved **only** when exactly one rosterable area exists;
-        otherwise the tool asks for one (clocking into the wrong location is a real
-        hazard). No roster is required.
+        otherwise the tool returns an error asking for one (clocking into the wrong
+        location is a real hazard). No roster is required. Calling it twice starts two
+        timesheets, so check deputy_whoami ("Clocked in now") first when unsure.
 
         When NOT to use: to record a past shift after the fact (use a full-timesheet
-        edit in Deputy) -- this starts the clock *now*.
+        edit in Deputy), or to end a shift (use deputy_clock_out).
 
-        Returns markdown (a confirmation with the timesheet id and start time; keep the
-        id to clock out) or, with response_format="json", the object ``{"timesheet_id",
-        "area_id", "in_progress", "start_time", "timezone"}``.
+        Returns markdown (a confirmation with the timesheet id and start time) or, with
+        response_format="json", the object ``{"timesheet_id", "area_id", "in_progress",
+        "start_time", "timezone"}``.
 
         Args:
             area_id: The area/location ``OperationalUnit.Id`` to clock into.
@@ -300,15 +329,16 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             int | None,
             Field(description="Optional unpaid meal-break length, in minutes, to record.", ge=0),
         ] = None,
-        response_format: ResponseFormat = "markdown",
+        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Clock the signed-in user out, ending their live timesheet.
 
-        Ends the user's single in-progress timesheet (looked up automatically). A
-        clear error is returned if none is open. Optionally records a meal break.
+        Ends the user's own in-progress timesheet, which Deputy reports on /me, so no
+        timesheet id is needed. A clear error is returned if the user is not clocked in.
+        Optionally records an unpaid meal break.
 
-        When NOT to use: when several timesheets are open at once -- this tool ends the
-        one in-progress record and errors if the situation is ambiguous.
+        When NOT to use: to end someone else's timesheet or to edit a past one -- this
+        only closes your currently running timesheet.
 
         Returns markdown (a confirmation with the ended timesheet id, end time and total
         hours) or, with response_format="json", the object ``{"timesheet_id",
@@ -347,6 +377,25 @@ def _md_claim(data: dict[str, Any]) -> str:
         "You are now assigned to this shift. Deputy returns no body on success, so "
         "re-read the roster if you need to confirm the change."
     )
+
+
+def _claim_prompt(shift_id: int, start: str, end: str, tz_label: str) -> str:
+    """The question the user approves before an open shift is assigned to them."""
+    return (
+        f"Claim open shift #{shift_id} ({start} to {end}, {tz_label})? Deputy will assign "
+        "it to you directly, skipping any manager approval step for open shifts."
+    )
+
+
+def _md_not_claimed(data: dict[str, Any]) -> str:
+    """Explanation when the user did not approve, or could not be asked."""
+    if data.get("reason") == "unsupported":
+        return (
+            f"**Open shift {data['shift_id']} was not claimed.**\n\n"
+            "Claiming needs your confirmation, but this MCP client does not support "
+            "elicitation, so it cannot ask you. Claim the shift in Deputy instead."
+        )
+    return f"**Open shift {data['shift_id']} was not claimed** -- the request was declined."
 
 
 def _md_swap(data: dict[str, Any]) -> str:
@@ -389,8 +438,6 @@ def _md_clock_in(data: dict[str, Any]) -> str:
     ]
     if data.get("start_time"):
         lines.append(f"- Started: {data['start_time']} ({data.get('timezone')})")
-    lines.append("")
-    lines.append("Keep the timesheet id above -- it is needed to clock out.")
     return "\n".join(lines)
 
 

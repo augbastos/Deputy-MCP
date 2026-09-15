@@ -149,7 +149,7 @@ def wire_write_api(
             }
         )
     )
-    router.post("/supervise/roster").mock(return_value=httpx.Response(200, text=""))
+    router.post("/supervise/roster", name="claim").mock(return_value=httpx.Response(200, text=""))
     router.post("/resource/RosterSwap").mock(return_value=_ok(swap))
     router.post("/supervise/unavail").mock(return_value=_ok(unavailability))
     router.post("/supervise/timesheet/start").mock(return_value=_ok(timesheet_started))

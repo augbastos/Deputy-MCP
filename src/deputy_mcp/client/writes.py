@@ -79,6 +79,27 @@ class WritesMixin:
 
     # -- public write operations -------------------------------------------
 
+    async def get_open_shift(self, roster_id: int) -> Roster:
+        """Read a shift and confirm it is still open (unassigned), without changing it.
+
+        Used to preview a claim before asking a human to approve it, and by
+        :meth:`claim_open_shift` itself so the check cannot be skipped.
+
+        Raises:
+            DeputyError: The shift exists but is not open.
+            DeputyNotFoundError: HTTP 404 -- no roster with that id.
+        """
+        roster = await self._get_roster(roster_id)
+        if not roster.Open:
+            raise DeputyError(
+                f"Shift {roster_id} is not an open shift; refusing to reassign it.",
+                hint=(
+                    "Only unassigned open shifts can be claimed. Check the shift id, or "
+                    "use a shift-swap request to take over an already-assigned shift."
+                ),
+            )
+        return roster
+
     async def claim_open_shift(self, roster_id: int) -> None:
         """Assign the current user to an open (unassigned) shift.
 
@@ -118,15 +139,7 @@ class WritesMixin:
         """
         self._require_writes()
         employee_id = await self.own_employee_id()
-        roster = await self._get_roster(roster_id)
-        if not roster.Open:
-            raise DeputyError(
-                f"Shift {roster_id} is not an open shift; refusing to reassign it.",
-                hint=(
-                    "Only unassigned open shifts can be claimed. Check the shift id, or "
-                    "use a shift-swap request to take over an already-assigned shift."
-                ),
-            )
+        roster = await self.get_open_shift(roster_id)
         body: dict[str, Any] = {
             "intRosterId": roster_id,
             "intRosterEmployee": employee_id,
