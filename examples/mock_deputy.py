@@ -1,4 +1,4 @@
-"""Fake Deputy API for the deputy-mcp demo -- DEMO / TESTING ONLY.
+"""Fake Deputy API for the Deputy MCP demo -- DEMO / TESTING ONLY.
 
 Serves a tiny slice of the Deputy Resource API on http://127.0.0.1:8765 using
 only the Python standard library, so ``deputy-mcp`` (whoami / roster / who /

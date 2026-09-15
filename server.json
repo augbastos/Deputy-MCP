@@ -1,65 +1,80 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.augbastos/deputy-mcp",
-  "title": "Deputy",
-  "description": "MCP server for Deputy workforce management: rosters, timesheets, and shift tools",
-  "version": "0.1.0",
+  "title": "Deputy MCP",
+  "description": "Deputy workforce data for AI agents: rosters, timesheets and shifts; read-only by default",
+  "version": "0.2.0",
+  "websiteUrl": "https://github.com/augbastos/Deputy-MCP",
   "repository": {
-    "url": "https://github.com/augbastos/deputy-mcp",
+    "url": "https://github.com/augbastos/Deputy-MCP",
     "source": "github"
   },
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "deputy-mcp",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "DEPUTY_API_TOKEN",
-          "description": "Auth mode A (full access): Deputy permanent token (needs an admin access level). Pair with DEPUTY_BASE_URL. Provide ONE of the three auth modes: A (token), B (OAuth: run 'deputy-mcp login' with the OAuth vars), or C (DEPUTY_CALENDAR_URL, roster-only).",
+          "description": "API token mode (all tools): a Deputy API token, created with an admin access level. Pair with DEPUTY_BASE_URL. Configure exactly one of the three authentication modes: API token, OAuth, or iCal feed.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "DEPUTY_BASE_URL",
-          "description": "Auth mode A only: your Deputy install URL, e.g. https://your-company.eu.deputy.com. Not needed for OAuth or iCal mode.",
+          "description": "API token mode: your Deputy install origin, e.g. https://your-company.eu.deputy.com.",
           "isRequired": false,
           "isSecret": false,
           "format": "string"
         },
         {
           "name": "DEPUTY_OAUTH_CLIENT_ID",
-          "description": "Auth mode B (OAuth, no admin needed): client id of an app registered at once.deputy.com/my/oauth_clients (redirect http://localhost:8823/callback). Then run 'deputy-mcp login'.",
+          "description": "OAuth mode (all tools, no admin needed): client id of a personal app registered at https://once.deputy.com/my/oauth_clients with redirect URI http://localhost:8823/callback. Run 'deputy-mcp login' once.",
           "isRequired": false,
           "isSecret": false,
           "format": "string"
         },
         {
           "name": "DEPUTY_OAUTH_CLIENT_SECRET",
-          "description": "Auth mode B (OAuth): client secret of the registered OAuth app. Used only to mint/refresh your access token via 'deputy-mcp login'.",
+          "description": "OAuth mode: client secret of the same app.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "DEPUTY_CALENDAR_URL",
-          "description": "Auth mode C (iCal, roster-only, no API token): your personal Deputy calendar feed URL (My Schedule -> subscribe/export). Carries a feed token, so treat as a secret.",
+          "description": "iCal feed mode (your own roster only, read-only): your personal Deputy calendar link. It contains a private token.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "DEPUTY_ALLOW_WRITES",
-          "description": "Set to true to enable the opt-in write tools (auth mode A/B only). Read-only by default.",
+          "description": "Set to true to register the write tools (API token and OAuth modes). Read-only by default.",
           "isRequired": false,
           "isSecret": false,
-          "format": "string"
+          "format": "string",
+          "default": "false",
+          "choices": [
+            "true",
+            "false"
+          ]
+        },
+        {
+          "name": "DEPUTY_TOKEN_STORE",
+          "description": "OAuth mode: file path for a plaintext token store, only where no OS keychain is available. Default: the OS keychain.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
         }
-      ]
+      ],
+      "registryBaseUrl": "https://pypi.org",
+      "runtimeHint": "uvx"
     }
   ]
 }

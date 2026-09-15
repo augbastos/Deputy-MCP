@@ -1,4 +1,4 @@
-"""OAuth 2.0 authorization-code (loopback) support for deputy-mcp.
+"""OAuth 2.0 authorization-code (loopback) support for Deputy MCP.
 
 Lets an ordinary Deputy employee — who cannot mint a permanent API token — run the
 standard Authorization Code flow against a one-shot loopback redirect to obtain a
@@ -74,15 +74,15 @@ _LOGIN_HINT = (
 )
 
 _SUCCESS_HTML = (
-    "<!doctype html><meta charset='utf-8'><title>deputy-mcp</title>"
+    "<!doctype html><meta charset='utf-8'><title>Deputy MCP</title>"
     "<body style='font-family:system-ui;margin:3rem'>"
-    "<h1>Authorized</h1><p>deputy-mcp is now signed in. "
+    "<h1>Authorized</h1><p>Deputy MCP is now signed in. "
     "You can close this tab and return to the terminal.</p></body>"
 )
 _ERROR_HTML = (
-    "<!doctype html><meta charset='utf-8'><title>deputy-mcp</title>"
+    "<!doctype html><meta charset='utf-8'><title>Deputy MCP</title>"
     "<body style='font-family:system-ui;margin:3rem'>"
-    "<h1>Sign-in failed</h1><p>deputy-mcp could not complete authorization. "
+    "<h1>Sign-in failed</h1><p>Deputy MCP could not complete authorization. "
     "Return to the terminal for details and try 'deputy-mcp login' again.</p></body>"
 )
 
@@ -331,7 +331,7 @@ async def run_login_flow(config: DeputyConfig, *, open_browser: bool = True) -> 
         authorize_url = build_authorize_url(client_id, redirect_uri, state)
         if open_browser:
             webbrowser.open(authorize_url)
-            print("Opening your browser to authorize deputy-mcp. Waiting for sign-in...")
+            print("Opening your browser to authorize Deputy MCP. Waiting for sign-in...")
         else:
             store_dir = (
                 config.token_store_path.parent

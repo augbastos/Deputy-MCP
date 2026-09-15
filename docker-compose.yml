@@ -1,6 +1,8 @@
-# deputy-mcp — local run via Docker Compose.
-# Usage: copy .env.example to .env, fill it in, then `docker compose run --rm deputy-mcp`.
-# The server speaks the MCP protocol over stdio, so it needs an attached stdin/tty.
+# Deputy MCP — local run via Docker Compose.
+# Copy .env.example to .env, fill in one authentication mode, then point your MCP client at:
+#   docker compose run --rm -T deputy-mcp
+# The server speaks MCP over stdio: stdin must stay open, and no TTY may be attached
+# (a TTY rewrites line endings and corrupts the JSON-RPC stream).
 services:
   deputy-mcp:
     build: .
@@ -8,4 +10,4 @@ services:
     env_file:
       - .env
     stdin_open: true
-    tty: true
+    tty: false

@@ -1,7 +1,7 @@
 [project]
 name = "deputy-mcp"
 dynamic = ["version"]
-description = "Open-source MCP server for Deputy (deputy.com) — query rosters, timesheets and manage shifts from any MCP client"
+description = "Deputy MCP: an MCP server that gives AI agents safe, read-only-by-default access to Deputy rosters, timesheets and shifts"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -16,17 +16,23 @@ keywords = [
     "scheduling",
     "timesheets",
     "claude",
+    "ai-agents",
+    "oauth2",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Topic :: Office/Business :: Scheduling",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
@@ -47,9 +53,10 @@ dependencies = [
 deputy-mcp = "deputy_mcp.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/augbastos/deputy-mcp"
-Repository = "https://github.com/augbastos/deputy-mcp"
-Issues = "https://github.com/augbastos/deputy-mcp/issues"
+Homepage = "https://github.com/augbastos/Deputy-MCP"
+Repository = "https://github.com/augbastos/Deputy-MCP"
+Issues = "https://github.com/augbastos/Deputy-MCP/issues"
+Changelog = "https://github.com/augbastos/Deputy-MCP/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

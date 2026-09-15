@@ -112,7 +112,7 @@ async def test_next_shift_for_me_only_reaches_self_service_endpoints(
 ) -> None:
     async with Client(create_server()) as client:
         text = tool_text(await client.call_tool("deputy_next_shift", {}))
-    assert "Front of House" in text
+    assert "| You | Front of House |" in text  # the same wording the iCal source uses
     assert set(_paths(api)) <= {"/me", "/my/roster"}
 
 

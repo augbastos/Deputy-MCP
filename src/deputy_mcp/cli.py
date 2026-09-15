@@ -1,4 +1,4 @@
-"""Thin command-line interface for deputy-mcp.
+"""Thin command-line interface for Deputy MCP (the ``deputy-mcp`` command).
 
 Two roles share one entry point:
 

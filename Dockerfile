@@ -1,4 +1,4 @@
-# deputy-mcp — container image running the MCP server over stdio.
+# Deputy MCP — container image running the MCP server over stdio.
 FROM python:3.13-slim
 
 # Copy the standalone uv binary from its official image (pinned major version).

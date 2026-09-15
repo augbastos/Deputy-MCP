@@ -117,6 +117,20 @@ def _filter_by_date(items: list[_ShiftT], start: date, end: date) -> list[_Shift
     return kept
 
 
+def _as_own(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Label self-service records as the caller's own, like the iCal source does.
+
+    ``/my/*`` records name the employee only by id, so without a join a renderer would
+    show "Employee #101" for the caller's own shift. Labelling them "You" makes the
+    output identical whichever source (API or iCal feed) the roster came from, and is
+    the clearest wording for an agent answering "when do I work?".
+    """
+    return [
+        rec if EMPLOYEE_JOIN in rec else {**rec, EMPLOYEE_JOIN: {"DisplayName": "You"}}
+        for rec in records
+    ]
+
+
 def _employee_label(emp: Employee) -> str:
     """A display name for disambiguation messages (name only, never contact details)."""
     return emp.DisplayName or " ".join(p for p in (emp.FirstName, emp.LastName) if p) or "Unnamed"
@@ -182,7 +196,7 @@ class ReadsMixin:
         """
         data = await self._http.request("GET", "/my/roster", cacheable=True)
         records = [rec for rec in data if isinstance(rec, dict)] if isinstance(data, list) else []
-        return _as_models(records, Roster)
+        return _as_models(_as_own(records), Roster)
 
     async def get_my_roster(self, start: date, end: date) -> list[Roster]:
         """Return the caller's own shifts within ``[start, end]`` (inclusive).
@@ -473,7 +487,7 @@ class ReadsMixin:
         """
         data = await self._http.request("GET", "/my/timesheets", cacheable=True)
         records = [rec for rec in data if isinstance(rec, dict)] if isinstance(data, list) else []
-        return _as_models(records, Timesheet)
+        return _as_models(_as_own(records), Timesheet)
 
     async def get_my_timesheets(self, start: date, end: date) -> list[Timesheet]:
         """Return the caller's own timesheets within ``[start, end]`` (inclusive).
