@@ -13,7 +13,7 @@ live install: ``/api/v1/me`` (not ``/resource/Account/WhoAmI``), the future-only
 bare-array ``/my/roster`` and ``/my/timesheets``. Manager/admin-only reads are asserted to
 ACCEPT EITHER real data (an admin/manager token) OR a clean :class:`DeputyPermissionError`
 (a plain employee token, which 403s "Access to object-type denied"), so this suite passes
-on BOTH token types.
+on both token types; so far it has been run only with an employee token.
 """
 
 from __future__ import annotations

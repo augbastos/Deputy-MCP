@@ -394,3 +394,24 @@ async def test_access_level_is_explicit_where_it_matters(deputy_env: Any) -> Non
         ), name
     for name in _SELF_SERVICE_TOOLS:
         assert "any Deputy access level" in (tools[name].description or ""), name
+
+
+async def test_ical_mode_descriptions_only_name_tools_that_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # iCal mode registers four tools; a description pointing at a team or timesheet tool
+    # would send the model looking for something it cannot call.
+    monkeypatch.setenv("DEPUTY_CALENDAR_URL", "https://cloud-nine-cafe.eu.deputy.com/ical/x.ics")
+    tools = await _tools()
+    assert set(tools) == {
+        "deputy_whoami",
+        "deputy_get_my_roster",
+        "deputy_next_shift",
+        "deputy_get_my_calendar_url",
+    }
+    for name, tool in tools.items():
+        description = tool.description or ""
+        assert "When NOT to use:" in description, name
+        referenced = set(re.findall(r"\bdeputy_[a-z_]+", description)) - {name}
+        assert referenced, name
+        assert referenced <= set(tools), (name, referenced - set(tools))

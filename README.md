@@ -26,7 +26,7 @@ unless you opt in, and works with an ordinary employee account, not just an admi
 | "What does my week look like?" | `deputy_get_my_roster` | any account |
 | "How many hours did I work last week? Am I clocked in?" | `deputy_get_my_timesheets`, `deputy_whoami` | any account |
 | "Who's on the floor right now?" | `deputy_who_is_working` | manager access |
-| "Is anyone free to cover Saturday's open shift?" | `deputy_search_shifts` | manager access |
+| "Which open shifts are there on Saturday?" | `deputy_search_shifts` | manager access |
 | "Take the open shift on Saturday." | `deputy_claim_open_shift`, **after you confirm it** | writes enabled |
 | "Block out every Monday morning." | `deputy_set_unavailability` | writes enabled |
 
@@ -56,8 +56,8 @@ sometimes pick the wrong tool or the wrong person.
   tools say they need manager access and, on an employee account, return a short
   pointer to the tools that do work instead of a raw 403.
 - **Nothing sensitive in answers.** Error bodies are redacted and truncated before a
-  model sees them; employee JSON is projected to names, ids and roles; the personal
-  calendar link is only returned when explicitly requested.
+  model sees them; employee JSON is projected to id, names, active flag, location and
+  role; the personal calendar link is returned only by `deputy_get_my_calendar_url`.
 - **Credentials stay put.** OAuth tokens live in the OS keychain; no token, secret or
   authorization code is logged, printed, or placed in an exception.
 
@@ -87,7 +87,7 @@ for example `https://your-company.eu.deputy.com`.
    expires; `deputy-mcp logout` removes it.
 
 Where no keychain exists (containers, headless hosts), set `DEPUTY_TOKEN_STORE` to a
-file path to use a plaintext file store created with owner-only permissions.
+file path to use a plaintext file store, created owner-only where the OS supports it.
 
 **iCal feed.** In Deputy, open *My Schedule → Subscribe / Export to calendar* and copy
 the link into `DEPUTY_CALENDAR_URL`. The link contains a private token: treat it as a
@@ -107,7 +107,7 @@ flowchart LR
         Client <--> Store
     end
 
-    Client -- "HTTPS, Bearer token<br/>*.deputy.com only" --> Deputy["Your Deputy install<br/>/api/v1"]
+    Client -- "HTTPS only, Bearer token<br/>https://*.deputy.com" --> Deputy["Your Deputy install<br/>/api/v1"]
     Client -- "HTTPS" --> Feed["Personal iCal feed"]
 ```
 
@@ -116,8 +116,8 @@ flowchart LR
   MCP dependency and backs the CLI as well.
 - `server/` adapts it to MCP with FastMCP 4: argument validation, tool descriptions a
   model can choose between, markdown or JSON output, and the confirmation gate.
-- One renderer (`render.py`) serves both surfaces, so a shift reads the same in the CLI
-  and in an agent's answer.
+- One renderer (`render.py`) serves both surfaces. The server shows times in the
+  install's timezone; the CLI shows UTC, because it skips the extra company lookup.
 
 ## Install
 
@@ -175,7 +175,7 @@ and iCal modes need nothing extra.
 ## Tools
 
 Every tool takes `response_format`: `"markdown"` (default) or `"json"`. Dates are
-ISO `YYYY-MM-DD`; times are shown in the install's timezone.
+ISO `YYYY-MM-DD`; times are shown in the install's timezone (UTC in iCal mode).
 
 ### Read tools — always registered
 
@@ -272,11 +272,14 @@ prompt: friction without protection trains people to click "yes".
 
 **Retries follow idempotency, not status codes.** GETs and Deputy's read-only QUERY
 POSTs retry on 429, 502–504 and timeouts with full-jitter exponential backoff that
-honours `Retry-After`. Write POSTs never retry: a timeout can hide a mutation Deputy
-already applied, and replaying a clock-in creates a second timesheet.
+honours `Retry-After`. Write POSTs are never retried on those: a timeout can hide a
+mutation Deputy already applied, and replaying a clock-in creates a second timesheet.
+The one replay is an OAuth request rejected with 401 before Deputy processed it, sent
+again once after a token refresh.
 
 **Hosts are an allowlist that fails closed.** The bearer token is only ever sent to
-`*.deputy.com` unless `DEPUTY_ALLOW_CUSTOM_HOST` is set. The same check covers the
+`https://*.deputy.com` unless `DEPUTY_ALLOW_CUSTOM_HOST` is set; a plain `http://` base
+URL is refused. The same check covers the
 install host returned by the OAuth token endpoint and the host recorded with a stored
 token, before that token is used or refreshed, so neither a tampered response nor a
 tampered token store can redirect credentials.
@@ -285,33 +288,36 @@ tampered token store can redirect credentials.
 pydantic `SecretStr` or redacted in `repr`. OAuth tokens live in the OS keychain through
 `keyring`, with no custom cryptography; the plaintext file store is an explicit opt-in.
 Keychain reads run in a worker thread, never on the event loop. Refresh follows
-Deputy's rotating-refresh-token model: refreshes are serialised per process, the store is re-read first so a token another process already rotated is
-adopted rather than spent twice, and the new pair is persisted immediately. Every error
+Deputy's rotating-refresh-token model: refreshes are serialised per process, the store
+is re-read first so a token another process already rotated is adopted rather than spent
+twice, and the new pair is persisted immediately. Every error
 message the tools, resources and CLI render passes through one sanitiser that
 removes bearer tokens, JWTs, OAuth codes, client secrets, emails, calendar-feed paths and
 query strings while keeping status codes and Deputy's own wording.
 
 **Protocol changes are absorbed by the framework.** The server uses FastMCP 4 and the
 MCP Python SDK 2 rather than hand-rolled protocol code. The same tool definitions are
-served over the stateless `2026-07-28` revision and the handshake-era revisions, and the
-test suite runs every agent-facing check against both.
+served over the stateless `2026-07-28` revision and the handshake-era revisions. Tests
+check that both eras advertise identical tools and hide write tools when writes are off,
+and exercise the open-shift confirmation on both.
 
 **Tests are layered by what they can prove.**
 - *Unit, client and server tests* mock Deputy at the HTTP layer with respx and run a real
   in-memory FastMCP client against the real server. They cover retries, pagination,
-  OAuth refresh and rotation, keychain migration, redaction and every tool's error path.
+  OAuth refresh and rotation, keychain migration, redaction and tool error handling.
 - *Agent-interface evals* (`pytest -m evals`) are deterministic checks of what a model
   sees: that "my next shift" reaches only self-service endpoints, that read tools never
   send a write, that write tools are absent when disabled, that ambiguous names never
-  resolve silently, that every JSON answer matches the contract its description
-  promises, and that descriptions point only at tools that exist.
+  resolve silently, that each read tool's JSON object has exactly the keys its
+  description documents, and that descriptions point only at tools registered in the
+  same configuration, iCal mode included.
 - *Live smoke tests* (`pytest -m live`) are read-only, opt-in, and never run in CI or
   with committed credentials.
 
 ## Quality gates
 
 Every pull request to `main` runs: ruff lint and format, mypy `--strict`, pytest on
-Linux (Python 3.11, 3.12, 3.13) and Windows (3.11, 3.13) with a branch-coverage floor,
+Linux (Python 3.11, 3.12, 3.13) and Windows (3.11, 3.13), a branch-coverage floor,
 the agent evals, a package build with `twine check`, an install-and-run of the built
 wheel, a CycloneDX SBOM, a container build, `pip-audit` over the full lockfile, CodeQL,
 and a gitleaks scan of the entire history. Dependabot keeps the lockfile, pinned action
@@ -320,8 +326,8 @@ SHAs and the base image current.
 ## Status and validation
 
 The self-service read paths (`/me`, `/my/roster`, `/my/timesheets`, `/my/colleague`),
-OAuth login and the employee-level permission degradation were validated with the live
-smoke suite against a real Deputy install using an employee account. Manager-only reads
+OAuth login and the employee-level permission degradation were validated in July 2026
+against a real Deputy install using an employee account. Manager-only reads
 have only been observed returning their permission error at that level, and the write
 tools have not been exercised against a live install. The OAuth refresh endpoint was
 corrected in 0.2.0 to follow Deputy's documentation and has not yet been re-validated

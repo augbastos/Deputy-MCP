@@ -9,8 +9,8 @@ name: scpe-seal
 #
 # Why a separate file: a workflow cannot name itself in `workflow_run.workflows`. GitHub
 # fails to register such a file — it shows the file path where the workflow name should
-# be, and every run fails at the workflow level with zero jobs. Measured on a live
-# repository (docs/workflows/scpe.yml records the experiment).
+# be, and every run fails at the workflow level with zero jobs (measured on a live
+# repository).
 #
 # `workflow_run` only fires for a workflow file present on the DEFAULT branch. Both files
 # have to reach `main` before any pull request gets a seal — including the PR that adds

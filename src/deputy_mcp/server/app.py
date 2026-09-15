@@ -48,7 +48,7 @@ def _instructions(*, allow_writes: bool, mode: Literal["api", "ical"]) -> str:
             "and any write action are NOT available; set DEPUTY_API_TOKEN and "
             "DEPUTY_BASE_URL to unlock the full Deputy API. Every tool accepts "
             "response_format='markdown' (default) or 'json'. Dates are ISO YYYY-MM-DD; "
-            "times are shown in UTC unless the feed carries a timezone."
+            "times are shown in UTC in this mode."
         )
     base = (
         "Query Deputy (deputy.com) workforce data: rosters, shifts, timesheets, employees "

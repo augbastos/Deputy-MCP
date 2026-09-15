@@ -70,6 +70,41 @@ __all__ = ["register", "resolve_client_timezone"]
 #: A zero-argument provider returning the process-wide Deputy client.
 ClientProvider = Callable[[], DeputyClient]
 
+#: In iCal mode only four tools exist, so these replace the API-mode descriptions that
+#: point the model at team, timesheet or lookup tools it cannot see.
+_ICAL_DESCRIPTIONS = {
+    "deputy_whoami": (
+        "Confirm the Deputy connection. In this configuration (iCal feed mode, no API token) "
+        "it reports that only your own roster is available.\n\n"
+        "When NOT to use: to read your shifts (use deputy_get_my_roster or "
+        "deputy_next_shift).\n\n"
+        'Returns markdown or, with response_format="json", an object '
+        '``{"mode", "roster_only", "available_tools"}``.'
+    ),
+    "deputy_get_my_roster": (
+        "List your own shifts in a date range from your personal Deputy calendar feed. "
+        "Defaults to today through the next 7 days; dates are ISO YYYY-MM-DD. Times are "
+        "shown in UTC in this mode.\n\n"
+        "When NOT to use: for only the single next shift (use deputy_next_shift).\n\n"
+        'Returns markdown (a shift list) or, with response_format="json", a list of Roster '
+        "records."
+    ),
+    "deputy_next_shift": (
+        "Return your own next upcoming shift from your personal Deputy calendar feed. Leave "
+        "'employee' empty: other people's shifts are not available in this mode.\n\n"
+        "When NOT to use: for a range of shifts (use deputy_get_my_roster).\n\n"
+        "Returns markdown (one shift, or a note that none is scheduled) or, with "
+        'response_format="json", a single Roster record or null.'
+    ),
+    "deputy_get_my_calendar_url": (
+        "Confirm that your personal calendar feed is configured. The feed link itself is a "
+        "secret in this mode and is never shown.\n\n"
+        "When NOT to use: to read the shifts in the feed (use deputy_get_my_roster).\n\n"
+        'Returns markdown or, with response_format="json", an object '
+        '``{"mode", "configured", "calendar_url"}``.'
+    ),
+}
+
 #: Reused Field description for the dual-format switch on every tool.
 _FORMAT_FIELD = Field(
     description="Output format: 'markdown' (human-readable, default) or 'json' (raw records)."
@@ -118,7 +153,15 @@ def register(
     """
     read_only = _read_only_annotations
 
-    @mcp.tool(name="deputy_whoami", annotations=read_only("Check Deputy connection"))
+    def described(name: str) -> str | None:
+        """The iCal-mode description for ``name``, or ``None`` to use the docstring."""
+        return _ICAL_DESCRIPTIONS[name] if mode == "ical" else None
+
+    @mcp.tool(
+        name="deputy_whoami",
+        annotations=read_only("Check Deputy connection"),
+        description=described("deputy_whoami"),
+    )
     async def deputy_whoami(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
@@ -188,7 +231,11 @@ def register(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_my_calendar_url", annotations=read_only("My calendar feed link"))
+    @mcp.tool(
+        name="deputy_get_my_calendar_url",
+        annotations=read_only("My calendar feed link"),
+        description=described("deputy_get_my_calendar_url"),
+    )
     async def deputy_get_my_calendar_url(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
@@ -220,7 +267,11 @@ def register(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_my_roster", annotations=read_only("My roster"))
+    @mcp.tool(
+        name="deputy_get_my_roster",
+        annotations=read_only("My roster"),
+        description=described("deputy_get_my_roster"),
+    )
     async def deputy_get_my_roster(
         start_date: Annotated[str | None, Field(description="Start date (ISO).")] = None,
         end_date: Annotated[str | None, Field(description="End date (ISO).")] = None,
@@ -238,8 +289,7 @@ def register(
         worked time (use deputy_get_my_timesheets) — this returns your scheduled shifts.
 
         Returns markdown (a shift list, times in the install timezone) or, with
-        response_format="json", a list of Roster records. The output is identical whether
-        the roster came from the Deputy API or, in iCal mode, from your calendar feed.
+        response_format="json", a list of Roster records.
         """
         client = get_client()
         try:
@@ -258,7 +308,11 @@ def register(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_next_shift", annotations=read_only("Next shift"))
+    @mcp.tool(
+        name="deputy_next_shift",
+        annotations=read_only("Next shift"),
+        description=described("deputy_next_shift"),
+    )
     async def deputy_next_shift(
         employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
@@ -498,9 +552,11 @@ def _register_api_tools(
     async def deputy_get_areas(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
-        """List all areas (operational units / work locations) with their ids.
+        """List areas (operational units / work locations) with their ids.
 
-        Use the ids to filter deputy_get_team_roster or deputy_search_shifts.
+        With a manager or administrator access level this lists every area on the install;
+        at a standard employee level it lists the areas of your own upcoming shifts. Use the
+        ids to filter deputy_get_team_roster or deputy_search_shifts.
 
         When NOT to use: to list shifts or people — this only enumerates locations.
 

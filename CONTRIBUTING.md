@@ -2,8 +2,8 @@
 
 Thanks for considering a contribution. This guide covers setup, how the code is laid
 out, and the bar a change has to clear. The project is small and strict on purpose:
-the gates below are green on `main`, and every claim in the docs is backed by code or a
-test. Changes are expected to keep it that way.
+the gates below must pass on every pull request, and a claim in the docs needs code or a
+test behind it.
 
 ## Setup
 
@@ -71,7 +71,7 @@ src/deputy_mcp/
 tests/
   unit/ client/        mocked with respx; fictional data from conftest.py
   server/              real in-memory FastMCP client against the real server
-  server/test_agent_evals.py   what a model sees and triggers, on both protocol eras
+  server/test_agent_evals.py   what a model sees and triggers through the protocol
   live/                opt-in read-only smoke tests (pytest -m live), never in CI
 ```
 
@@ -109,14 +109,17 @@ in `server/`.
        """List the signed-in user's leave requests in a date range."""
    ```
 
-   Read tools use `read_only(title)`; write tools use `_write_annotations(title)` in
-   `tools_write.py`, which keeps them behind `DEPUTY_ALLOW_WRITES`.
+   Read tools use `read_only(title)`. Write tools live in `tools_write.py`, which
+   `app.py` imports only when `DEPUTY_ALLOW_WRITES` is enabled, and use
+   `_write_annotations(title)`. A read tool registered in iCal mode also needs an entry
+   in `_ICAL_DESCRIPTIONS` that names only the tools that exist there.
 
 2. **Write the description for a model choosing between tools.** The docstring becomes
    the tool description. It states what the tool returns and at which Deputy access
    level it works, has a `When NOT to use:` line naming the sibling tool to use instead,
    and documents both output formats. If the JSON output is an object, list its keys as
-   ``` ``{"a", "b"}`` ```: the agent evals check the real output against that contract.
+   ``` ``{"a", "b"}`` ```: for read tools the agent evals check the real output against
+   that contract.
 
 3. **Keep secrets and personal data out of answers.** Catch `DeputyError` and return
    `format_error(exc)` (read tools) or the write tools' formatter, both of which redact.

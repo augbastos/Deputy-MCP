@@ -195,3 +195,19 @@ def test_config_error_message_never_leaks_token() -> None:
     with pytest.raises(DeputyConfigError) as exc:
         DeputyConfig.from_env(_base_env(DEPUTY_MAX_RETRIES="-5"))
     assert TEST_TOKEN not in str(exc.value)
+
+
+def test_plain_http_base_url_is_refused_unless_custom_hosts_are_allowed() -> None:
+    with pytest.raises(DeputyConfigError, match="must use https"):
+        DeputyConfig.from_env(
+            {"DEPUTY_API_TOKEN": "t", "DEPUTY_BASE_URL": "http://acme.eu.deputy.com"}
+        )
+    with pytest.warns(UserWarning, match="allowed because DEPUTY_ALLOW_CUSTOM_HOST"):
+        local = DeputyConfig.from_env(
+            {
+                "DEPUTY_API_TOKEN": "t",
+                "DEPUTY_BASE_URL": "http://127.0.0.1:8765",
+                "DEPUTY_ALLOW_CUSTOM_HOST": "true",
+            }
+        )
+    assert local.base_url == "http://127.0.0.1:8765"

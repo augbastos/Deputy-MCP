@@ -398,3 +398,16 @@ def test_token_store_delete(tmp_path: Path) -> None:
     assert store.load() is None
     # Deleting an absent store is a no-op that reports nothing was removed.
     assert store.delete() is False
+
+
+async def test_refresh_refuses_plain_http_even_on_a_deputy_host() -> None:
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(DeputyAuthError):
+            await refresh(
+                http,
+                _CLIENT_ID,
+                _CLIENT_SECRET,
+                "ref",
+                base_url="http://acme.eu.deputy.com",
+                redirect_uri=_REDIRECT,
+            )

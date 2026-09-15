@@ -261,18 +261,19 @@ def _tokens_from_response(
 
 
 def require_deputy_host(base_url: str, *, allow_custom_host: bool) -> None:
-    """Refuse an install host outside ``*.deputy.com`` unless custom hosts are allowed.
+    """Refuse an install that is not ``https://*.deputy.com`` unless custom hosts are allowed.
 
     The same fail-closed allowlist static-token mode enforces via
     ``DeputyConfig._validate_base_url``: an unexpected host would receive the bearer
     token (and, on refresh, the client secret) on a server we do not control.
     """
-    host = urlparse(base_url).hostname or ""
-    if host.endswith(".deputy.com") or allow_custom_host:
+    parsed = urlparse(base_url)
+    host = parsed.hostname or ""
+    if (parsed.scheme == "https" and host.endswith(".deputy.com")) or allow_custom_host:
         return
     raise DeputyAuthError(
-        f"Deputy's OAuth response named an install host '{host}' that is not a "
-        "Deputy install ('{install}.{geo}.deputy.com'). Refusing to use it.",
+        f"The OAuth install '{parsed.scheme}://{host}' is not a Deputy install "
+        "('https://{install}.{geo}.deputy.com'). Refusing to use it.",
         hint=(
             "If this is a legitimate enterprise custom domain, set "
             "DEPUTY_ALLOW_CUSTOM_HOST=true. " + _LOGIN_HINT

@@ -136,7 +136,14 @@ class DeputyConfig(BaseModel):
         if value is None:
             return None
         normalized = normalize_base_url(value)
-        host = urlparse(normalized).hostname or ""
+        parsed = urlparse(normalized)
+        host = parsed.hostname or ""
+        if parsed.scheme != "https" and not info.data.get("allow_custom_host", False):
+            # The bearer token rides in a header: plain http would expose it on the wire.
+            raise ValueError(
+                f"DEPUTY_BASE_URL must use https (got '{parsed.scheme}://'). Use the "
+                "https:// address you see when logged in to Deputy."
+            )
         if not host.endswith(".deputy.com"):
             # Fail closed on an unexpected host: a typo or wrong value could point the
             # token at an unintended server. Legitimate enterprise custom domains opt

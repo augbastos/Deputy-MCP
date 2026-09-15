@@ -33,11 +33,14 @@ All notable changes to Deputy MCP. The format follows
 ### Fixed
 
 - **OAuth refresh** now calls the user's install (`/oauth/access_token`) with the
-  redirect URI, as Deputy documents. It previously posted to `once.deputy.com`, which
-  answers a refresh with "We did not detect 'code' in POST call", so an expired access
-  token meant logging in again.
+  redirect URI, as Deputy documents; it previously posted to the code-exchange endpoint on
+  `once.deputy.com`. Not yet re-validated against a live install.
 - A token loaded from the keychain or token file is checked against the `*.deputy.com`
   allowlist before use; previously a tampered store could redirect the bearer token.
+- A plain `http://` Deputy base URL or OAuth install is refused, so the bearer token is
+  never sent unencrypted (unless `DEPUTY_ALLOW_CUSTOM_HOST` is set, e.g. for a local mock).
+- In iCal mode, tool descriptions no longer point the model at tools that only exist with
+  an API token.
 - A login performed while the server runs takes effect without a restart, and a token
   already rotated by another process is adopted instead of refreshed twice. The keychain
   is read in a worker thread, not on the event loop.

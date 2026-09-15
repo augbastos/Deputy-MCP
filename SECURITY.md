@@ -13,7 +13,7 @@ the [CHANGELOG](CHANGELOG.md).
 
 ## Supported versions
 
-Only the latest release on `main` receives security fixes.
+Only the latest commit on `main` receives security fixes.
 
 ## Scope
 
@@ -21,14 +21,16 @@ In scope: anything that lets Deputy MCP disclose a credential or personal data, 
 credential to a host other than the user's Deputy install, perform a write without the
 operator's opt-in, or bypass the confirmation required for open-shift claims.
 
-Out of scope: vulnerabilities in Deputy itself (report those to Deputy), in an MCP
-client, or an attack that requires control of the user's machine or operating-system
-account, which can read the keychain anyway.
+Out of scope: vulnerabilities in Deputy itself (report those to Deputy) or in an MCP
+client, and attacks by code already running as the user, which can read the keychain
+anyway. A local file or setting that can redirect credentials, such as a writable token
+file, is still in scope.
 
 ## Design notes for reviewers
 
-- Tokens are sent only to `*.deputy.com` unless `DEPUTY_ALLOW_CUSTOM_HOST` is set, and the
-  same allowlist applies to hosts named by the OAuth token response and a stored token.
+- Tokens are sent only to `https://*.deputy.com` unless `DEPUTY_ALLOW_CUSTOM_HOST` is set,
+  and the same allowlist applies to hosts named by the OAuth token response and a stored
+  token.
 - OAuth tokens are stored in the OS keychain through `keyring`; the plaintext file store
   is used only when `DEPUTY_TOKEN_STORE` is set.
 - A `.env` found in the working directory cannot enable writes, allow custom hosts or
