@@ -43,10 +43,12 @@ from deputy_mcp.client.models import (
 )
 
 __all__ = [
+    "PUBLIC_EMPLOYEE_FIELDS",
     "ResponseFormat",
     "areas_by_id",
     "employee_display",
     "fmt_ts",
+    "public_employee",
     "render",
     "render_areas",
     "render_calendar_url",
@@ -65,6 +67,17 @@ __all__ = [
 
 #: Accepted values for a tool's ``response_format`` argument.
 ResponseFormat = Literal["markdown", "json"]
+
+#: The employee fields any JSON output may carry: the facts the markdown shows, plus ids.
+PUBLIC_EMPLOYEE_FIELDS: tuple[str, ...] = (
+    "Id",
+    "DisplayName",
+    "FirstName",
+    "LastName",
+    "Active",
+    "Company",
+    "Role",
+)
 
 #: Company/location keys that may carry an IANA timezone name (probed in order).
 _TZ_KEYS = ("Timezone", "TimeZone", "Time_zone", "TimezoneName", "TimeZoneName")
@@ -113,8 +126,29 @@ def areas_by_id(units: list[OperationalUnit]) -> dict[int, str]:
 # --------------------------------------------------------------------------- #
 # JSON output
 # --------------------------------------------------------------------------- #
+def public_employee(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project an employee record down to :data:`PUBLIC_EMPLOYEE_FIELDS`."""
+    return {key: record[key] for key in PUBLIC_EMPLOYEE_FIELDS if key in record}
+
+
 def _jsonable(value: Any) -> Any:
-    """Recursively convert pydantic models/containers to JSON-safe values."""
+    """Recursively convert pydantic models/containers to JSON-safe values.
+
+    Employee data is projected, not dumped: an ``Employee`` record, and the employee
+    joined onto a roster or timesheet, keep only :data:`PUBLIC_EMPLOYEE_FIELDS`. Deputy's
+    employee payloads also carry a date of birth, contact links and whatever undocumented
+    fields an install adds, none of which a tool answer needs.
+    """
+    if isinstance(value, Employee):
+        return public_employee(value.model_dump(mode="json"))
+    if isinstance(value, (Roster, Timesheet)):
+        dumped = value.model_dump(mode="json")
+        joined = dumped.get(EMPLOYEE_JOIN)
+        if isinstance(joined, Mapping):
+            dumped[EMPLOYEE_JOIN] = public_employee(joined)
+        elif isinstance(joined, list):
+            dumped[EMPLOYEE_JOIN] = [public_employee(j) for j in joined if isinstance(j, Mapping)]
+        return dumped
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     if isinstance(value, Mapping):

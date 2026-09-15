@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from deputy_mcp.client import DeputyClient
-from deputy_mcp.client.errors import DeputyConfigError, DeputyError, DeputyNotFoundError
+from deputy_mcp.client.errors import DeputyConfigError, DeputyError
 from deputy_mcp.config import DeputyConfig
 from deputy_mcp.render import (
     render_areas,
@@ -153,23 +153,6 @@ def _emit_json(payload: Any) -> None:
 # --------------------------------------------------------------------------- #
 # Command handlers (async; each reuses DeputyClient)
 # --------------------------------------------------------------------------- #
-async def _resolve_employee(client: DeputyClient, value: str) -> int:
-    """Resolve an employee name-or-id argument to an employee id."""
-    text = value.strip()
-    if text.isdigit():
-        return int(text)
-    matches = await client.get_employees(search=text)
-    if not matches:
-        raise DeputyNotFoundError(
-            f"No active employee matches '{value}'.",
-            hint="Try a different spelling, or pass a numeric employee id.",
-        )
-    ident = matches[0].Id
-    if ident is None:
-        raise DeputyNotFoundError(f"The employee matched for '{value}' has no id.")
-    return ident
-
-
 async def _cmd_whoami(client: DeputyClient, as_json: bool) -> None:
     who = await client.whoami()
     try:
@@ -236,7 +219,7 @@ async def _cmd_areas(client: DeputyClient, as_json: bool) -> None:
 
 
 async def _cmd_next(client: DeputyClient, args: argparse.Namespace) -> None:
-    employee_id = await _resolve_employee(client, args.employee) if args.employee else None
+    employee_id = await client.resolve_employee_id(args.employee)
     shift = await client.next_shift(employee_id)
     if args.as_json:
         _emit_json(shift)

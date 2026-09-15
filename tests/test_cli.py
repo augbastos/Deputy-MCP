@@ -24,6 +24,7 @@ from deputy_mcp.client.models import (
     Timesheet,
     WhoAmI,
 )
+from deputy_mcp.client.reads import ReadsMixin
 
 PayloadFactory = Any
 
@@ -78,7 +79,12 @@ class FakeClient:
 
     async def get_employees(self, search: str | None = None) -> Any:
         self.calls["search"] = search
-        return self._value("employees")
+        employees = self._value("employees")
+        needle = (search or "").lower()
+        return [emp for emp in employees if needle in (emp.DisplayName or "").lower()]
+
+    # The real name-or-id resolver, running against this fake's get_employees.
+    resolve_employee_id = ReadsMixin.resolve_employee_id
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, fake: FakeClient) -> None:
@@ -226,6 +232,22 @@ def test_next_by_name_resolves_employee(
     # Alex Rivera resolves to id 101 before next_shift is called.
     assert fake.calls["next_employee"] == 101
     assert "Next shift" in capsys.readouterr().out
+
+
+def test_next_with_an_ambiguous_name_never_picks_someone(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    models: dict[str, Any],
+    make_employee: PayloadFactory,
+) -> None:
+    alex_two = Employee.model_validate(make_employee(Id=104, DisplayName="Alex Byrne"))
+    fake = FakeClient(employees=[*models["employees"], alex_two], next=models["roster"])
+    _install(monkeypatch, fake)
+    assert cli.main(["next", "--employee", "Alex"]) == 1
+    err = capsys.readouterr().err
+    assert "Multiple employees match 'Alex'" in err
+    assert "id 101" in err and "id 104" in err
+    assert "next_employee" not in fake.calls  # no shift was looked up for anyone
 
 
 def test_next_none_scheduled(

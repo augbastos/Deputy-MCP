@@ -22,7 +22,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from deputy_mcp.client.errors import DeputyNotFoundError, DeputyPermissionError
+from deputy_mcp.client.errors import DeputyError, DeputyNotFoundError, DeputyPermissionError
 from deputy_mcp.client.http import DeputyHTTP
 from deputy_mcp.client.models import (
     Colleague,
@@ -114,6 +114,11 @@ def _filter_by_date(items: list[_ShiftT], start: date, end: date) -> list[_Shift
             kept.append(item)
     kept.sort(key=lambda item: item.StartTime if item.StartTime is not None else 0)
     return kept
+
+
+def _employee_label(emp: Employee) -> str:
+    """A display name for disambiguation messages (name only, never contact details)."""
+    return emp.DisplayName or " ".join(p for p in (emp.FirstName, emp.LastName) if p) or "Unnamed"
 
 
 def _manager_only_error(action: str) -> DeputyPermissionError:
@@ -304,6 +309,35 @@ class ReadsMixin:
         except DeputyPermissionError as exc:
             raise _manager_only_error("list employees") from exc
         return _as_models(records, Employee)
+
+    async def resolve_employee_id(self, ref: str | None) -> int | None:
+        """Resolve an employee reference (numeric id or name) to exactly one id.
+
+        A blank reference means "me" and returns ``None`` (callers resolve self). A
+        numeric string is used as-is. A name is matched against active employees and must
+        resolve to exactly one person: zero matches or several raise an actionable
+        :class:`DeputyError`, and the ambiguous case lists every match with its id so the
+        caller can retry by id. Silently picking the first match could read, or act on,
+        the wrong person.
+        """
+        if ref is None or not ref.strip():
+            return None
+        text = ref.strip()
+        if text.isdigit():
+            return int(text)
+        matches = [emp for emp in await self.get_employees(search=text) if emp.Id is not None]
+        if not matches:
+            raise DeputyNotFoundError(
+                f"No active employee found matching '{text}'.",
+                hint="Try a numeric employee id or a different part of the name.",
+            )
+        if len(matches) > 1:
+            listing = "; ".join(f"{_employee_label(emp)} (id {emp.Id})" for emp in matches)
+            raise DeputyError(
+                f"Multiple employees match '{text}': {listing}.",
+                hint="Re-run with the numeric employee id of the person you mean.",
+            )
+        return matches[0].Id
 
     async def get_employee(self, employee_id: int) -> Employee:
         """Fetch a single employee by id (``GET /resource/Employee/{id}``).

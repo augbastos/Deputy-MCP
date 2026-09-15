@@ -30,8 +30,10 @@ from pydantic import Field
 
 from deputy_mcp.client import DeputyClient, DeputyError
 from deputy_mcp.client.whoami import (
+    employee_id_from_whoami,
     whoami_calendar_url,
     whoami_company_name,
+    whoami_display_name,
     whoami_is_clocked_in,
 )
 from deputy_mcp.server._read_helpers import (
@@ -44,7 +46,6 @@ from deputy_mcp.server._read_helpers import (
 from deputy_mcp.server.formatting import (
     ResponseFormat,
     areas_by_id,
-    employee_display,
     render,
     render_areas,
     render_calendar_url,
@@ -97,36 +98,6 @@ async def _area_map(client: DeputyClient) -> dict[int, str]:
         return {}
 
 
-async def _resolve_employee_id(client: DeputyClient, ref: str | None) -> int | None:
-    """Resolve an employee reference (numeric id or name) to a single id, or ``None``.
-
-    A blank reference means "me" (``None`` — the caller resolves self). A numeric
-    string is used directly. A name is matched against active employees: exactly one
-    match resolves to that id; zero or several raise an actionable :class:`DeputyError`.
-    The ambiguous case lists every match with its id so the caller can retry by id,
-    instead of silently picking the first (which could act on the wrong person).
-    """
-    if ref is None or not ref.strip():
-        return None
-    text = ref.strip()
-    if text.isdigit():
-        return int(text)
-    # get_employees already filters to active employees; keep those with a usable id.
-    matches = [emp for emp in await client.get_employees(search=text) if emp.Id is not None]
-    if not matches:
-        raise DeputyError(
-            f"No employee found matching '{text}'.",
-            hint="Try a numeric employee id or a different part of the name.",
-        )
-    if len(matches) > 1:
-        listing = "; ".join(f"{employee_display(emp)} (id {emp.Id})" for emp in matches)
-        raise DeputyError(
-            f"Multiple employees match '{text}': {listing}.",
-            hint="Re-run with the numeric employee id of the person you mean.",
-        )
-    return matches[0].Id
-
-
 def register(
     mcp: FastMCP[Any], get_client: ClientProvider, *, mode: Literal["api", "ical"] = "api"
 ) -> None:
@@ -157,11 +128,12 @@ def register(
         deputy_get_employee_info) — this only checks the connection and identity.
 
         Returns markdown (a connection summary: signed-in name, company, timezone, whether
-        clocked in, and the calendar feed) or, with response_format="json", an object
-        ``{"whoami", "company", "timezone", "company_name", "clocked_in", "calendar_url"}``
-        where ``clocked_in`` is a bool and ``calendar_url`` is a string or null. In iCal
-        mode there is no API identity, so this reports mode=iCal and that only your roster
-        is available.
+        clocked in, and the calendar feed) or, with response_format="json", the same facts
+        as ``{"name", "employee_id", "company_name", "timezone", "clocked_in",
+        "calendar_url"}`` where ``clocked_in`` is a bool and ``employee_id`` /
+        ``calendar_url`` may be null. The raw /me record is never returned. In iCal mode
+        there is no API identity, so this reports mode=iCal and that only your roster is
+        available.
         """
         if mode == "ical":
             data = {
@@ -187,11 +159,17 @@ def register(
             company_name = (
                 company.CompanyName or company.TradingName if company is not None else None
             ) or whoami_company_name(who)
+            try:
+                employee_id: int | None = employee_id_from_whoami(who)
+            except DeputyError:
+                employee_id = None
+            # A curated projection of the facts the markdown shows: the raw /me record also
+            # carries permissions and other account detail the model has no use for.
             data = {
-                "whoami": who,
-                "company": company,
-                "timezone": tz_label,
+                "name": whoami_display_name(who),
+                "employee_id": employee_id,
                 "company_name": company_name,
+                "timezone": tz_label,
                 "clocked_in": clocked_in,
                 "calendar_url": calendar_url,
             }
@@ -246,6 +224,9 @@ def register(
         Defaults to today through the next 7 days, computed in UTC; dates are ISO
         YYYY-MM-DD.
 
+        Works at any Deputy access level. Prefer it over deputy_get_team_roster or
+        deputy_search_shifts whenever the question is about the signed-in user's own shifts.
+
         When NOT to use: for other people's shifts (use deputy_get_team_roster) or for
         worked time (use deputy_get_my_timesheets) — this returns your scheduled shifts.
 
@@ -259,11 +240,12 @@ def register(
             end = parse_date(end_date, start + timedelta(days=7))
             rosters = await client.get_my_roster(start, end)
             tz, label = await resolve_client_timezone(client)
-            areas = await _area_map(client)
             title = f"My roster ({start.isoformat()} to {end.isoformat()})"
+            # Self-service records embed their area name, so no area lookup (an admin-only
+            # OperationalUnit/QUERY for most employees) is spent here.
             return render(
                 rosters,
-                lambda: render_roster_list(rosters, tz, label, title=title, areas=areas),
+                lambda: render_roster_list(rosters, tz, label, title=title),
                 response_format,
             )
         except DeputyError as exc:
@@ -276,8 +258,10 @@ def register(
     ) -> str:
         """Return the single next upcoming shift for an employee (name or id).
 
-        Omit 'employee' to get your own next shift. A name must resolve to exactly one
-        active person; otherwise the matches are listed for you to retry by id.
+        Omit 'employee' to get your own next shift; that works at any Deputy access level.
+        Naming someone else needs a manager or administrator access level. A name must
+        resolve to exactly one active person; otherwise the matches are listed for you to
+        retry by id, and no shift is returned.
 
         When NOT to use: for a full range of upcoming shifts (use deputy_get_my_roster
         or deputy_search_shifts) — this returns only the earliest one.
@@ -288,10 +272,12 @@ def register(
         """
         client = get_client()
         try:
-            employee_id = await _resolve_employee_id(client, employee)
+            employee_id = await client.resolve_employee_id(employee)
             roster = await client.next_shift(employee_id)
             tz, label = await resolve_client_timezone(client)
-            areas = await _area_map(client)
+            # Only another person's shift comes from the manager QUERY path without an
+            # embedded area name; your own comes from /my/roster, which carries it.
+            areas = await _area_map(client) if employee_id is not None else None
             return render(
                 roster,
                 lambda: render_next_shift(roster, tz, label, areas=areas),
@@ -401,7 +387,8 @@ def _register_api_tools(
         to translate location/area ids into names.
 
         Returns markdown (an employee list with ids) or, with response_format="json", a
-        list of Employee records.
+        list of profiles with the same facts: Id, DisplayName, FirstName, LastName, Active,
+        Company and Role. Contact details and dates of birth are never returned.
         """
         client = get_client()
         try:
@@ -446,7 +433,7 @@ def _register_api_tools(
         """
         client = get_client()
         try:
-            employee_id = None if open_only else await _resolve_employee_id(client, employee)
+            employee_id = None if open_only else await client.resolve_employee_id(employee)
             start = opt_date(start_date)
             end = opt_date(end_date)
             rosters = await client.search_shifts(
