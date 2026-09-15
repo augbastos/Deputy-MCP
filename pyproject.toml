@@ -32,6 +32,9 @@ classifiers = [
 dependencies = [
     "fastmcp>=4.0.3,<5",
     "httpx>=0.27",
+    # OAuth tokens live in the OS keychain (Windows Credential Manager, macOS Keychain,
+    # Secret Service on Linux) via keyring; see src/deputy_mcp/token_store.py.
+    "keyring>=25",
     "pydantic>=2.12",
     "python-dotenv>=1.0",
     # Ships the IANA tz database for zoneinfo.ZoneInfo. Windows and slim Linux

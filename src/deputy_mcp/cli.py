@@ -11,8 +11,9 @@ Two roles share one entry point:
   :func:`asyncio.run`. ``--json`` emits the raw API objects; otherwise a human
   rendering is printed.
 * ``login`` runs the OAuth 2.0 loopback flow (for an employee who cannot mint a
-  permanent API token), persisting the resulting access/refresh tokens to the
-  token store; ``logout`` deletes that store. Neither ever prints a token value.
+  permanent API token), persisting the resulting access/refresh tokens to the OS
+  keychain (or the file named by ``DEPUTY_TOKEN_STORE``); ``logout`` removes them.
+  Neither ever prints a token value.
 
 Every :class:`~deputy_mcp.client.errors.DeputyError` is turned into a single
 actionable stderr line and exit code 1 — callers never see a traceback.
@@ -51,6 +52,7 @@ from deputy_mcp.render import (
     to_json,
 )
 from deputy_mcp.sanitize import redact
+from deputy_mcp.token_store import resolve_token_store
 
 __all__ = ["main"]
 
@@ -299,37 +301,41 @@ def _cmd_login(*, open_browser: bool = True) -> int:
         _fail(exc)
         return 1
 
-    store = oauth.TokenStore(config.token_store_path)
-    store.save(tokens)
+    store = resolve_token_store(config.token_store_path)
+    try:
+        store.save(tokens)
+    except DeputyError as exc:
+        _fail(exc)
+        return 1
     expires = datetime.fromtimestamp(tokens.expires_at, tz=UTC)
     print(
-        f"Logged in — API base {tokens.base_url}, token stored at {store.path}, "
+        f"Logged in — API base {tokens.base_url}, token stored in {store.location}, "
         f"access token expires {expires:%Y-%m-%d %H:%M UTC}"
     )
     return 0
 
 
-def _token_store_path() -> Path:
-    """Resolve the token-store path, even when no credentials are configured."""
+def _token_store_path() -> Path | None:
+    """Resolve the explicit file-store path (``None`` = OS keychain), even unconfigured."""
     try:
         return DeputyConfig.from_env().token_store_path
     except DeputyConfigError:
         raw = (os.environ.get("DEPUTY_TOKEN_STORE") or "").strip()
-        if raw:
-            return Path(raw)
-        return Path.home() / ".deputy-mcp" / "token.json"
+        return Path(raw).expanduser() if raw else None
 
 
 def _cmd_logout() -> int:
     """Delete the stored OAuth token, if any."""
-    from deputy_mcp import oauth
-
-    path = _token_store_path()
-    store = oauth.TokenStore(path)
-    if store.delete():
-        print(f"Logged out — removed token store at {path}.")
+    store = resolve_token_store(_token_store_path())
+    try:
+        removed = store.delete()
+    except DeputyError as exc:
+        _fail(exc)
+        return 1
+    if removed:
+        print(f"Logged out — removed the Deputy token from {store.location}.")
     else:
-        print(f"No Deputy token store to remove at {path}.")
+        print(f"No Deputy token to remove in {store.location}.")
     return 0
 
 

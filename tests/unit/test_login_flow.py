@@ -27,7 +27,8 @@ import respx
 from deputy_mcp import oauth
 from deputy_mcp.client.errors import DeputyAuthError, DeputyConfigError
 from deputy_mcp.config import DeputyConfig
-from deputy_mcp.oauth import TOKEN_URL, TokenStore, run_login_flow
+from deputy_mcp.oauth import TOKEN_URL, run_login_flow
+from deputy_mcp.token_store import FileTokenStore
 
 _INSTALL_ORIGIN = "https://acme.eu.deputy.com"
 _CLIENT_ID = "fake-oauth-client-id"
@@ -98,8 +99,8 @@ async def test_run_login_flow_success_returns_exchanged_tokens(
     assert tokens.refresh_token == "flow-refresh"
     assert tokens.base_url == _INSTALL_ORIGIN
     # The exchanged tokens are persistable: saving and reloading round-trips them.
-    TokenStore(store_path).save(tokens)
-    reloaded = TokenStore(store_path).load()
+    FileTokenStore(store_path).save(tokens)
+    reloaded = FileTokenStore(store_path).load()
     assert reloaded is not None
     assert reloaded.access_token == "flow-access"
 

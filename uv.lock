@@ -393,6 +393,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
+    { name = "keyring" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "tzdata" },
@@ -411,6 +412,7 @@ dev = [
 requires-dist = [
     { name = "fastmcp", specifier = ">=4.0.3,<5" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "keyring", specifier = ">=25" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "tzdata", specifier = ">=2024.1" },

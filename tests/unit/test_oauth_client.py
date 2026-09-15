@@ -21,7 +21,8 @@ import respx
 
 from deputy_mcp.client import DeputyClient
 from deputy_mcp.client.errors import DeputyAuthError, DeputyError
-from deputy_mcp.oauth import TOKEN_URL, OAuthTokens, TokenStore
+from deputy_mcp.oauth import refresh_url
+from deputy_mcp.token_store import FileTokenStore, OAuthTokens
 
 _INSTALL_ORIGIN = "https://acme.eu.deputy.com"
 _ROSTER_URL = f"{_INSTALL_ORIGIN}/api/v1/my/roster"
@@ -49,9 +50,11 @@ def _oauth_env(store_path: Path) -> dict[str, str]:
     }
 
 
-def _seed_store(store_path: Path, *, access: str, refresh: str, expires_at: float) -> TokenStore:
+def _seed_store(
+    store_path: Path, *, access: str, refresh: str, expires_at: float
+) -> FileTokenStore:
     """Persist a starting token set and return the store bound to it."""
-    store = TokenStore(store_path)
+    store = FileTokenStore(store_path)
     store.save(
         OAuthTokens(
             access_token=access,
@@ -82,7 +85,9 @@ async def test_oauth_mode_uses_stored_token_and_base_url(tmp_path: Path) -> None
         roster = router.get(_ROSTER_URL).mock(
             return_value=httpx.Response(200, json=[_ROSTER_RECORD])
         )
-        token = router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json={}))
+        token = router.post(refresh_url(_INSTALL_ORIGIN)).mock(
+            return_value=httpx.Response(200, json={})
+        )
         async with DeputyClient.from_env(_oauth_env(store_path)) as client:
             assert client.mode == "api"  # OAuth resolves to the full API surface
             rosters = await client.get_my_roster(_WINDOW_START, _WINDOW_END)
@@ -104,7 +109,7 @@ async def test_oauth_refreshes_on_401_persists_and_retries_once(tmp_path: Path) 
                 httpx.Response(200, json=[_ROSTER_RECORD]),
             ]
         )
-        token = router.post(TOKEN_URL).mock(
+        token = router.post(refresh_url(_INSTALL_ORIGIN)).mock(
             return_value=httpx.Response(200, json=_token_body("new-access", "new-refresh"))
         )
         async with DeputyClient.from_env(_oauth_env(store_path)) as client:
@@ -131,7 +136,7 @@ async def test_oauth_pre_emptive_refresh_when_expired(tmp_path: Path) -> None:
         roster = router.get(_ROSTER_URL).mock(
             return_value=httpx.Response(200, json=[_ROSTER_RECORD])
         )
-        token = router.post(TOKEN_URL).mock(
+        token = router.post(refresh_url(_INSTALL_ORIGIN)).mock(
             return_value=httpx.Response(200, json=_token_body("fresh-access", "fresh-refresh"))
         )
         async with DeputyClient.from_env(_oauth_env(store_path)) as client:
@@ -150,7 +155,7 @@ async def test_oauth_refresh_failure_raises_actionable_auth_error(tmp_path: Path
 
     with respx.mock(assert_all_called=False) as router:
         router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[_ROSTER_RECORD]))
-        router.post(TOKEN_URL).mock(
+        router.post(refresh_url(_INSTALL_ORIGIN)).mock(
             return_value=httpx.Response(400, json={"error": "invalid_grant"})
         )
         async with DeputyClient.from_env(_oauth_env(store_path)) as client:

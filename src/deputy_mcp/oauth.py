@@ -6,29 +6,31 @@ real ``access_token`` (+ long-life ``refresh_token``) bound to their own account
 The tokens unlock the same full ``/my/*`` surface the static-token ("api") mode
 uses; manager-only tools keep degrading with a permission error for a non-manager.
 
+Endpoints follow Deputy's "Using OAuth 2.0" guide: the browser authorizes and the code
+is exchanged at ``once.deputy.com``; the token response names the user's install
+(``endpoint``), and every later refresh goes to that install's own
+``/oauth/access_token``. Deputy access tokens last 24 hours and each refresh rotates the
+refresh token, so the new pair must be persisted every time (see
+:mod:`deputy_mcp.token_store`).
+
 Secrets discipline: no access token, refresh token, client secret, or authorization
 code is ever logged, printed, or placed in an exception. :class:`OAuthTokens`
 redacts its ``repr``; the loopback handler suppresses the stdlib request log (which
-would echo the ``?code=`` query); and token-endpoint error bodies are scrubbed of
-any secret we hold before surfacing. The live endpoints are smoke-test-pending, so
-responses are parsed defensively (several install-endpoint field spellings).
+would echo the ``?code=`` query); and token-endpoint error bodies go through
+:func:`deputy_mcp.sanitize.snippet` with every secret we hold before surfacing.
+Response fields are parsed defensively, since Deputy publishes no response schema.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hmac
-import json
-import os
 import secrets
-import stat
 import threading
 import time
 import webbrowser
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -42,25 +44,22 @@ from deputy_mcp.errors import (
     DeputyError,
 )
 from deputy_mcp.sanitize import snippet
+from deputy_mcp.token_store import OAuthTokens, default_config_dir
 
 if TYPE_CHECKING:
     from deputy_mcp.config import DeputyConfig
 
-#: Browser authorize endpoint (GET). Smoke-test-pending: the exact host may be
-#: the install host rather than ``once.deputy.com`` — surface clear errors, do
-#: not silently assume success.
+#: Browser authorize endpoint (GET).
 AUTHORIZE_URL = "https://once.deputy.com/my/oauth/login"
-#: Token endpoint (POST form) for both code exchange and refresh.
+#: Code-exchange endpoint (POST form). Refreshes go to the install instead
+#: (:func:`refresh_url`).
 TOKEN_URL = "https://once.deputy.com/my/oauth/access_token"
 #: Scope requesting a long-life refresh token alongside the access token.
 SCOPE = "longlife_refresh_token"
-#: Default loopback port for the redirect URI (overridable per install). Re-exported
-#: from the leaf :mod:`deputy_mcp._util` so the constant has a single source of truth
-#: shared with :mod:`deputy_mcp.config`.
 
-#: Fallback access-token lifetime (seconds) when the response omits ``expires_in``.
-#: Token lifetime is a documented GAP; assume a conservative hour so the client
-#: refreshes rather than trusting a stale token indefinitely.
+#: Fallback access-token lifetime (seconds) when a response omits ``expires_in``.
+#: Deputy documents 24 hours; assume a conservative hour so the client refreshes
+#: early rather than trusting a stale token.
 _DEFAULT_EXPIRES_IN = 3600
 #: How long the login flow waits for the browser callback before giving up.
 _CALLBACK_TIMEOUT_S = 180.0
@@ -88,109 +87,14 @@ _ERROR_HTML = (
 )
 
 
-@dataclass(frozen=True)
-class OAuthTokens:
-    """A resolved OAuth token set bound to one Deputy install.
-
-    Attributes:
-        access_token: Bearer token for ``/api/v1`` requests (SECRET).
-        refresh_token: Long-life token used to mint new access tokens (SECRET).
-        expires_at: Absolute expiry as epoch seconds (``time.time()`` scale).
-        base_url: Normalized install origin, e.g. ``https://acme.eu.deputy.com``.
-
-    The ``repr`` redacts both token values so the object is safe to log.
-    """
-
-    access_token: str
-    refresh_token: str
-    expires_at: float
-    base_url: str
-
-    def is_expired(self, skew: float = 60.0) -> bool:
-        """Whether the token is expired, ``skew`` seconds early so refresh pre-empts it."""
-        return time.time() >= (self.expires_at - skew)
-
-    def __repr__(self) -> str:  # pragma: no cover - trivial redaction
-        return (
-            "OAuthTokens(access_token='***', refresh_token='***', "
-            f"expires_at={self.expires_at!r}, base_url={self.base_url!r})"
-        )
+def redirect_uri_for(port: int) -> str:
+    """The loopback redirect URI registered on the Deputy OAuth app for ``port``."""
+    return f"http://localhost:{port}/callback"
 
 
-class TokenStore:
-    """Load/save :class:`OAuthTokens` as JSON on disk, never logging values.
-
-    The file holds live credentials, so it is written with owner-only ``0600``
-    permissions (best effort — POSIX bits are a no-op on some Windows setups) and
-    its location is gitignored. All load errors are swallowed to ``None`` so a
-    missing/corrupt store degrades to "not logged in" rather than crashing.
-    """
-
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
-
-    @property
-    def path(self) -> Path:
-        """The on-disk location of the token store."""
-        return self._path
-
-    def load(self) -> OAuthTokens | None:
-        """Return the stored tokens, or ``None`` if absent/unreadable/corrupt."""
-        try:
-            raw = self._path.read_text(encoding="utf-8")
-            data = json.loads(raw)
-        except (OSError, ValueError):
-            return None
-        if not isinstance(data, dict):
-            return None
-        access = data.get("access_token")
-        refresh = data.get("refresh_token")
-        base_url = data.get("base_url")
-        expires_at = data.get("expires_at")
-        if not (isinstance(access, str) and isinstance(refresh, str) and isinstance(base_url, str)):
-            return None
-        if not isinstance(expires_at, (int, float, str)):
-            return None
-        try:
-            expires = float(expires_at)
-        except (TypeError, ValueError):
-            return None
-        return OAuthTokens(
-            access_token=access,
-            refresh_token=refresh,
-            expires_at=expires,
-            base_url=base_url,
-        )
-
-    def save(self, tokens: OAuthTokens) -> None:
-        """Persist ``tokens`` with best-effort ``0600`` permissions."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "access_token": tokens.access_token,
-            "refresh_token": tokens.refresh_token,
-            "expires_at": tokens.expires_at,
-            "base_url": tokens.base_url,
-        }
-        # Write then tighten perms. Create with restrictive perms up front where
-        # supported so the secret is never briefly world-readable.
-        fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle)
-        # POSIX bits may be unsupported (e.g. some Windows filesystems); the file
-        # still lives in a gitignored, per-user location, so best-effort is enough.
-        with contextlib.suppress(OSError):
-            os.chmod(self._path, stat.S_IRUSR | stat.S_IWUSR)
-
-    def delete(self) -> bool:
-        """Remove the token store if present. Returns whether a file was deleted."""
-        try:
-            self._path.unlink()
-            return True
-        except OSError:
-            return False
-
-    def __repr__(self) -> str:  # pragma: no cover - trivial
-        return f"TokenStore(path={self._path!r})"
+def refresh_url(base_url: str) -> str:
+    """The install-scoped token endpoint Deputy requires for refreshes."""
+    return f"{base_url}/oauth/access_token"
 
 
 def build_authorize_url(client_id: str, redirect_uri: str, state: str) -> str:
@@ -231,7 +135,7 @@ async def exchange_code(
         "scope": SCOPE,
     }
     return await _post_token(
-        http, data, scrub=(client_secret, code), allow_custom_host=allow_custom_host
+        http, TOKEN_URL, data, scrub=(client_secret, code), allow_custom_host=allow_custom_host
     )
 
 
@@ -241,39 +145,51 @@ async def refresh(
     client_secret: str,
     refresh_token: str,
     *,
+    base_url: str,
+    redirect_uri: str,
     allow_custom_host: bool = False,
 ) -> OAuthTokens:
     """Mint a fresh access token from a ``refresh_token`` (grant_type=refresh_token).
 
-    See :func:`exchange_code` for what ``allow_custom_host`` guards.
+    Deputy serves refreshes from the user's own install (``{base_url}/oauth/access_token``)
+    rather than ``once.deputy.com``, and requires the app's ``redirect_uri``. The install
+    host is checked against the same allowlist as a login before the client secret and
+    refresh token are sent to it, so a tampered token store cannot redirect them. Deputy
+    rotates the refresh token on every call; the caller must persist the returned pair.
     """
+    _require_deputy_host(base_url, allow_custom_host=allow_custom_host)
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
         "client_id": client_id,
         "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
         "scope": SCOPE,
     }
     return await _post_token(
         http,
+        refresh_url(base_url),
         data,
         scrub=(client_secret, refresh_token),
         fallback_refresh=refresh_token,
+        fallback_base_url=base_url,
         allow_custom_host=allow_custom_host,
     )
 
 
 async def _post_token(
     http: httpx.AsyncClient,
+    url: str,
     data: dict[str, str],
     *,
     scrub: tuple[str, ...],
     fallback_refresh: str | None = None,
+    fallback_base_url: str | None = None,
     allow_custom_host: bool = False,
 ) -> OAuthTokens:
-    """POST a form to the token endpoint and parse the result defensively."""
+    """POST a form to a token endpoint and parse the result defensively."""
     try:
-        response = await http.post(TOKEN_URL, data=data)
+        response = await http.post(url, data=data)
     except httpx.HTTPError as exc:
         msg = "Could not reach Deputy's OAuth token endpoint."
         raise DeputyError(msg, hint=_LOGIN_HINT) from exc
@@ -295,7 +211,10 @@ async def _post_token(
     if not isinstance(parsed, dict):
         raise DeputyError("Deputy's OAuth token response was not a JSON object.", hint=_LOGIN_HINT)
     return _tokens_from_response(
-        parsed, fallback_refresh=fallback_refresh, allow_custom_host=allow_custom_host
+        parsed,
+        fallback_refresh=fallback_refresh,
+        fallback_base_url=fallback_base_url,
+        allow_custom_host=allow_custom_host,
     )
 
 
@@ -303,9 +222,14 @@ def _tokens_from_response(
     data: dict[str, Any],
     *,
     fallback_refresh: str | None = None,
+    fallback_base_url: str | None = None,
     allow_custom_host: bool = False,
 ) -> OAuthTokens:
-    """Build :class:`OAuthTokens` from a token-endpoint JSON body, tolerating gaps."""
+    """Build :class:`OAuthTokens` from a token-endpoint JSON body, tolerating gaps.
+
+    A code exchange must name the install (``endpoint``). A refresh is already bound to
+    one, so ``fallback_base_url`` keeps it when the response omits the field.
+    """
     access = data.get("access_token")
     if not isinstance(access, str) or not access:
         raise DeputyAuthError(
@@ -319,32 +243,40 @@ def _tokens_from_response(
 
     expires_in = _coerce_float(data.get("expires_in"), _DEFAULT_EXPIRES_IN)
 
-    endpoint = _first_str(data, _ENDPOINT_FIELDS)
+    endpoint = _first_str(data, _ENDPOINT_FIELDS) or fallback_base_url
     if not endpoint:
         raise DeputyError(
             "Deputy's OAuth response did not include the install endpoint.",
             hint="The token response shape may have changed. " + _LOGIN_HINT,
         )
     base_url = normalize_base_url(endpoint)
-    host = urlparse(base_url).hostname or ""
-    if not host.endswith(".deputy.com") and not allow_custom_host:
-        # Same fail-closed allowlist static-token mode enforces via
-        # DeputyConfig._validate_base_url: an unexpected host here would send the
-        # bearer access token to a server we do not control.
-        raise DeputyAuthError(
-            f"Deputy's OAuth response named an install host '{host}' that is not a "
-            "Deputy install ('{install}.{geo}.deputy.com'). Refusing to use it.",
-            hint=(
-                "If this is a legitimate enterprise custom domain, set "
-                "DEPUTY_ALLOW_CUSTOM_HOST=true. " + _LOGIN_HINT
-            ),
-        )
+    _require_deputy_host(base_url, allow_custom_host=allow_custom_host)
 
     return OAuthTokens(
         access_token=access,
         refresh_token=refresh_value,
         expires_at=time.time() + expires_in,
         base_url=base_url,
+    )
+
+
+def _require_deputy_host(base_url: str, *, allow_custom_host: bool) -> None:
+    """Refuse an install host outside ``*.deputy.com`` unless custom hosts are allowed.
+
+    The same fail-closed allowlist static-token mode enforces via
+    ``DeputyConfig._validate_base_url``: an unexpected host would receive the bearer
+    token (and, on refresh, the client secret) on a server we do not control.
+    """
+    host = urlparse(base_url).hostname or ""
+    if host.endswith(".deputy.com") or allow_custom_host:
+        return
+    raise DeputyAuthError(
+        f"Deputy's OAuth response named an install host '{host}' that is not a "
+        "Deputy install ('{install}.{geo}.deputy.com'). Refusing to use it.",
+        hint=(
+            "If this is a legitimate enterprise custom domain, set "
+            "DEPUTY_ALLOW_CUSTOM_HOST=true. " + _LOGIN_HINT
+        ),
     )
 
 
@@ -357,7 +289,8 @@ async def run_login_flow(config: DeputyConfig, *, open_browser: bool = True) -> 
     Never prints a secret — only progress; the caller surfaces base_url/expiry.
 
     When ``open_browser`` is ``False`` the browser is not launched; the authorize URL
-    is printed (flushed) and written to ``authorize_url.txt`` beside the token store,
+    is printed (flushed) and written to ``authorize_url.txt`` in ``~/.deputy-mcp`` (or
+    beside an explicit file token store),
     so the sign-in can be completed manually or in a remote/headless setup.
     """
     client_id = (config.oauth_client_id or "").strip()
@@ -372,7 +305,7 @@ async def run_login_flow(config: DeputyConfig, *, open_browser: bool = True) -> 
         )
     client_secret = config.oauth_client_secret_value()
     port = config.redirect_port
-    redirect_uri = f"http://localhost:{port}/callback"
+    redirect_uri = redirect_uri_for(port)
     state = secrets.token_urlsafe(32)
 
     result = _CallbackResult()
@@ -400,7 +333,12 @@ async def run_login_flow(config: DeputyConfig, *, open_browser: bool = True) -> 
             webbrowser.open(authorize_url)
             print("Opening your browser to authorize deputy-mcp. Waiting for sign-in...")
         else:
-            url_file = config.token_store_path.parent / "authorize_url.txt"
+            store_dir = (
+                config.token_store_path.parent
+                if config.token_store_path is not None
+                else default_config_dir()
+            )
+            url_file = store_dir / "authorize_url.txt"
             url_file.parent.mkdir(parents=True, exist_ok=True)
             url_file.write_text(authorize_url, encoding="utf-8")
             print(f"Authorize URL written to {url_file}", flush=True)
@@ -523,9 +461,10 @@ __all__ = [
     "SCOPE",
     "TOKEN_URL",
     "OAuthTokens",
-    "TokenStore",
     "build_authorize_url",
     "exchange_code",
+    "redirect_uri_for",
     "refresh",
+    "refresh_url",
     "run_login_flow",
 ]

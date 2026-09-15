@@ -6,7 +6,7 @@ Covers the pure/parsing surface of OAuth mode without any browser or loopback:
 * ``exchange_code`` / ``refresh`` parse a (respx-mocked) token-endpoint response,
   tolerating the several install-endpoint field spellings the live API might use
   (``endpoint`` / ``install`` / ``Endpoint``) and normalizing it to a bare origin.
-* :class:`TokenStore` round-trips tokens on disk with owner-only permissions and
+* :class:`FileTokenStore` round-trips tokens on disk with owner-only permissions and
   never leaks a token value in a ``repr``/``str`` or a raised exception.
 * :class:`OAuthTokens` redacts its ``repr`` and expires with a configurable skew.
 
@@ -31,12 +31,12 @@ from deputy_mcp.oauth import (
     AUTHORIZE_URL,
     SCOPE,
     TOKEN_URL,
-    OAuthTokens,
-    TokenStore,
     build_authorize_url,
     exchange_code,
     refresh,
+    refresh_url,
 )
+from deputy_mcp.token_store import FileTokenStore, OAuthTokens
 
 # Fictional install + credentials (never real secrets).
 _INSTALL_ORIGIN = "https://acme.eu.deputy.com"
@@ -160,6 +160,43 @@ async def test_exchange_code_posts_authorization_code_grant() -> None:
     assert sent["scope"] == [SCOPE]
 
 
+async def _refresh(http: httpx.AsyncClient, refresh_token: str) -> OAuthTokens:
+    return await refresh(
+        http,
+        _CLIENT_ID,
+        _CLIENT_SECRET,
+        refresh_token,
+        base_url=_INSTALL_ORIGIN,
+        redirect_uri=_REDIRECT,
+    )
+
+
+async def test_refresh_keeps_install_when_response_omits_endpoint() -> None:
+    body = {"access_token": "acc-new", "refresh_token": "ref-new", "expires_in": 60}
+    with respx.mock(assert_all_called=False) as router:
+        router.post(refresh_url(_INSTALL_ORIGIN)).mock(return_value=httpx.Response(200, json=body))
+        async with httpx.AsyncClient() as http:
+            tokens = await _refresh(http, "ref-old")
+    assert tokens.base_url == _INSTALL_ORIGIN
+
+
+async def test_refresh_refuses_a_non_deputy_install_before_sending_secrets() -> None:
+    # A tampered token store must not be able to point the client secret elsewhere.
+    with respx.mock(assert_all_called=False) as router:
+        route = router.post("https://evil.example.org/oauth/access_token")
+        async with httpx.AsyncClient() as http:
+            with pytest.raises(DeputyAuthError):
+                await refresh(
+                    http,
+                    _CLIENT_ID,
+                    _CLIENT_SECRET,
+                    "ref",
+                    base_url="https://evil.example.org",
+                    redirect_uri=_REDIRECT,
+                )
+    assert route.call_count == 0
+
+
 async def test_refresh_posts_refresh_token_grant_and_parses() -> None:
     body = {
         "access_token": "acc-new",
@@ -168,12 +205,18 @@ async def test_refresh_posts_refresh_token_grant_and_parses() -> None:
         "endpoint": _INSTALL_ORIGIN,
     }
     with respx.mock(assert_all_called=False) as router:
-        route = router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=body))
+        route = router.post(refresh_url(_INSTALL_ORIGIN)).mock(
+            return_value=httpx.Response(200, json=body)
+        )
         async with httpx.AsyncClient() as http:
-            tokens = await refresh(http, _CLIENT_ID, _CLIENT_SECRET, "ref-old")
+            tokens = await _refresh(http, "ref-old")
+    # Deputy serves refreshes from the install itself and requires the redirect URI.
+    assert str(route.calls.last.request.url) == f"{_INSTALL_ORIGIN}/oauth/access_token"
     sent = parse_qs(route.calls.last.request.content.decode())
     assert sent["grant_type"] == ["refresh_token"]
     assert sent["refresh_token"] == ["ref-old"]
+    assert sent["redirect_uri"] == [_REDIRECT]
+    assert sent["scope"] == [SCOPE]
     assert tokens.access_token == "acc-new"
     assert tokens.refresh_token == "ref-new"
 
@@ -183,9 +226,9 @@ async def test_refresh_keeps_old_refresh_token_when_response_omits_it() -> None:
     # existing long-life refresh token must be retained rather than lost.
     body = {"access_token": "acc-new", "expires_in": 900, "endpoint": _INSTALL_ORIGIN}
     with respx.mock(assert_all_called=False) as router:
-        router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=body))
+        router.post(refresh_url(_INSTALL_ORIGIN)).mock(return_value=httpx.Response(200, json=body))
         async with httpx.AsyncClient() as http:
-            tokens = await refresh(http, _CLIENT_ID, _CLIENT_SECRET, "ref-keep-me")
+            tokens = await _refresh(http, "ref-keep-me")
     assert tokens.refresh_token == "ref-keep-me"
 
 
@@ -221,10 +264,12 @@ async def test_token_endpoint_400_raises_auth_error_scrubbing_secrets() -> None:
 
 async def test_token_endpoint_500_raises_api_error() -> None:
     with respx.mock(assert_all_called=False) as router:
-        router.post(TOKEN_URL).mock(return_value=httpx.Response(503, text="upstream down"))
+        router.post(refresh_url(_INSTALL_ORIGIN)).mock(
+            return_value=httpx.Response(503, text="upstream down")
+        )
         async with httpx.AsyncClient() as http:
             with pytest.raises(DeputyAPIError):
-                await refresh(http, _CLIENT_ID, _CLIENT_SECRET, "ref")
+                await _refresh(http, "ref")
 
 
 async def test_token_response_without_endpoint_raises_without_leaking_access_token() -> None:
@@ -285,7 +330,7 @@ def test_oauth_tokens_repr_redacts_both_tokens() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# TokenStore — round-trip, permissions, redaction, delete
+# FileTokenStore — round-trip, permissions, redaction, delete
 # --------------------------------------------------------------------------- #
 def _tokens() -> OAuthTokens:
     return OAuthTokens(
@@ -297,7 +342,7 @@ def _tokens() -> OAuthTokens:
 
 
 def test_token_store_round_trip(tmp_path: Path) -> None:
-    store = TokenStore(tmp_path / "token.json")
+    store = FileTokenStore(tmp_path / "token.json")
     store.save(_tokens())
     loaded = store.load()
     assert loaded is not None
@@ -308,38 +353,38 @@ def test_token_store_round_trip(tmp_path: Path) -> None:
 
 
 def test_token_store_creates_parent_directory(tmp_path: Path) -> None:
-    store = TokenStore(tmp_path / "nested" / "dir" / "token.json")
+    store = FileTokenStore(tmp_path / "nested" / "dir" / "token.json")
     store.save(_tokens())
     assert store.path.is_file()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits are best-effort on Windows")
 def test_token_store_writes_owner_only_permissions(tmp_path: Path) -> None:
-    store = TokenStore(tmp_path / "token.json")
+    store = FileTokenStore(tmp_path / "token.json")
     store.save(_tokens())
     mode = stat.S_IMODE(os.stat(store.path).st_mode)
     assert mode == 0o600
 
 
 def test_token_store_missing_file_loads_none(tmp_path: Path) -> None:
-    assert TokenStore(tmp_path / "absent.json").load() is None
+    assert FileTokenStore(tmp_path / "absent.json").load() is None
 
 
 def test_token_store_corrupt_file_loads_none(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
     path.write_text("{not valid json", encoding="utf-8")
-    assert TokenStore(path).load() is None
+    assert FileTokenStore(path).load() is None
 
 
 def test_token_store_incomplete_payload_loads_none(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
     # Missing refresh_token / base_url -> not a usable token set.
     path.write_text(json.dumps({"access_token": "a"}), encoding="utf-8")
-    assert TokenStore(path).load() is None
+    assert FileTokenStore(path).load() is None
 
 
 def test_token_store_repr_only_shows_path_not_tokens(tmp_path: Path) -> None:
-    store = TokenStore(tmp_path / "token.json")
+    store = FileTokenStore(tmp_path / "token.json")
     store.save(_tokens())
     rendered = repr(store)
     assert "stored-access-secret" not in rendered
@@ -347,7 +392,7 @@ def test_token_store_repr_only_shows_path_not_tokens(tmp_path: Path) -> None:
 
 
 def test_token_store_delete(tmp_path: Path) -> None:
-    store = TokenStore(tmp_path / "token.json")
+    store = FileTokenStore(tmp_path / "token.json")
     store.save(_tokens())
     assert store.delete() is True
     assert store.load() is None

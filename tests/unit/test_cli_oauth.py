@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from deputy_mcp import cli, oauth
-from deputy_mcp.oauth import OAuthTokens, TokenStore
+from deputy_mcp.token_store import FileTokenStore, OAuthTokens
 
 _INSTALL_ORIGIN = "https://acme.eu.deputy.com"
 _CLIENT_ID = "fake-oauth-client-id"
@@ -88,7 +88,7 @@ def test_login_success_persists_tokens_without_printing_a_token(
     assert _ACCESS_TOKEN not in out
     assert "fake-refresh-token-value" not in out
     # The tokens were actually persisted and round-trip from the store.
-    reloaded = TokenStore(store_path).load()
+    reloaded = FileTokenStore(store_path).load()
     assert reloaded is not None
     assert reloaded.access_token == _ACCESS_TOKEN
 
@@ -99,14 +99,14 @@ def test_logout_removes_an_existing_store(
     """logout deletes the token store and reports the removal."""
     store_path = clean_env
     monkeypatch.setenv("DEPUTY_TOKEN_STORE", str(store_path))
-    TokenStore(store_path).save(
+    FileTokenStore(store_path).save(
         OAuthTokens("a", "r", expires_at=4_100_000_000.0, base_url=_INSTALL_ORIGIN)
     )
     assert store_path.exists()
 
     assert cli.main(["logout"]) == 0
     out = capsys.readouterr().out
-    assert "removed token store" in out.lower()
+    assert "removed the deputy token" in out.lower()
     assert not store_path.exists()
 
 
@@ -118,4 +118,4 @@ def test_logout_without_a_store_is_graceful(
     monkeypatch.setenv("DEPUTY_TOKEN_STORE", str(store_path))
     assert cli.main(["logout"]) == 0
     out = capsys.readouterr().out
-    assert "no deputy token store" in out.lower()
+    assert "no deputy token to remove" in out.lower()

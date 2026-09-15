@@ -17,7 +17,7 @@ import pytest
 
 from deputy_mcp.client.errors import DeputyConfigError
 from deputy_mcp.config import DeputyConfig
-from deputy_mcp.oauth import OAuthTokens, TokenStore
+from deputy_mcp.token_store import FileTokenStore, OAuthTokens
 
 _BASE_URL = "https://cloud-nine-cafe.eu.deputy.com"
 _CLIENT_ID = "fake-oauth-client-id"
@@ -33,7 +33,7 @@ def _absent_store(tmp_path: Path) -> str:
 def _write_store(tmp_path: Path) -> str:
     """Write a valid token store (with a refresh token) and return its path."""
     path = tmp_path / "token.json"
-    TokenStore(path).save(
+    FileTokenStore(path).save(
         OAuthTokens(
             access_token="stored-access",
             refresh_token="stored-refresh",
@@ -159,8 +159,8 @@ def test_stored_endpoint_is_the_base_url_used_for_oauth(tmp_path: Path) -> None:
     # The base URL an OAuth-mode transport talks to is the store's endpoint. Assert the
     # stored value round-trips to the normalized origin the transport will use.
     path = tmp_path / "token.json"
-    TokenStore(path).save(OAuthTokens("a", "r", expires_at=1_900_000_000.0, base_url=_BASE_URL))
-    reloaded = TokenStore(path).load()
+    FileTokenStore(path).save(OAuthTokens("a", "r", expires_at=1_900_000_000.0, base_url=_BASE_URL))
+    reloaded = FileTokenStore(path).load()
     assert reloaded is not None
     assert reloaded.base_url == _BASE_URL
     # Sanity: the file really is JSON on disk carrying that endpoint.

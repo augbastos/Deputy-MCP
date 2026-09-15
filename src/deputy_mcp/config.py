@@ -75,11 +75,6 @@ _CWD_ENV_DENYLIST = frozenset(
 )
 
 
-def _default_token_store_path() -> Path:
-    """Default location for the OAuth token store (``~/.deputy-mcp/token.json``)."""
-    return Path.home() / ".deputy-mcp" / "token.json"
-
-
 class DeputyConfig(BaseModel):
     """Validated runtime configuration.
 
@@ -126,7 +121,9 @@ class DeputyConfig(BaseModel):
     calendar_url: SecretStr | None = None
     oauth_client_id: str | None = None
     oauth_client_secret: SecretStr | None = None
-    token_store_path: Path = Field(default_factory=_default_token_store_path)
+    #: ``None`` keeps OAuth tokens in the OS keychain (the default); a path selects the
+    #: plaintext file fallback (see :mod:`deputy_mcp.token_store`).
+    token_store_path: Path | None = None
     redirect_port: int = Field(default=DEFAULT_REDIRECT_PORT, gt=0)
     allow_writes: bool = False
     cache_ttl: int = Field(default=30, ge=0)
@@ -297,7 +294,7 @@ class DeputyConfig(BaseModel):
         oauth_client_id = (env.get("DEPUTY_OAUTH_CLIENT_ID") or "").strip()
         oauth_client_secret = (env.get("DEPUTY_OAUTH_CLIENT_SECRET") or "").strip()
         token_store_raw = (env.get("DEPUTY_TOKEN_STORE") or "").strip()
-        token_store_path = Path(token_store_raw) if token_store_raw else _default_token_store_path()
+        token_store_path = Path(token_store_raw).expanduser() if token_store_raw else None
         redirect_port = _parse_int(env, "DEPUTY_OAUTH_REDIRECT_PORT", DEFAULT_REDIRECT_PORT)
 
         # OAuth is a usable path when both client creds are present (so 'deputy-mcp login'

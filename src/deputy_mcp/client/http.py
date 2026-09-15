@@ -45,7 +45,7 @@ from deputy_mcp.client.errors import (
 from deputy_mcp.config import DeputyConfig
 
 if TYPE_CHECKING:
-    from deputy_mcp.oauth import OAuthTokens, TokenStore
+    from deputy_mcp.token_store import OAuthTokens, TokenStore
 
 #: HTTP statuses that are safe to retry (throttling + transient upstream).
 _RETRY_STATUSES = frozenset({429, 502, 503, 504})
@@ -226,7 +226,12 @@ class DeputyHTTP:
 
         Serialized by ``_refresh_lock``: if another task already rotated the token
         since ``stale_access_token`` was captured, this is a no-op so a single 401
-        storm does not burn several refresh-token round-trips. On failure a
+        storm does not burn several refresh-token round-trips.
+
+        Deputy rotates the refresh token on every refresh, so two *processes* sharing
+        one store (the MCP server and a CLI call, or a fresh ``deputy-mcp login``) must
+        not both spend the same refresh token. Before refreshing, the store is re-read:
+        a newer, unexpired token another process saved is adopted instead. On failure a
         :class:`DeputyAuthError` is raised pointing the user at ``deputy-mcp login``;
         no token or secret is ever included in the message.
         """
@@ -237,6 +242,15 @@ class DeputyHTTP:
             if current is None or current.access_token != stale_access_token:
                 # Not OAuth, or a concurrent refresh already replaced the token.
                 return
+            if self._token_store is not None:
+                stored = await asyncio.to_thread(self._token_store.load)
+                if (
+                    stored is not None
+                    and stored.access_token != current.access_token
+                    and not stored.is_expired()
+                ):
+                    self._apply_tokens(stored)
+                    return
             client_id = (self._config.oauth_client_id or "").strip()
             if not client_id or self._config.oauth_client_secret is None:
                 raise DeputyAuthError(
@@ -254,6 +268,8 @@ class DeputyHTTP:
                         client_id,
                         client_secret,
                         current.refresh_token,
+                        base_url=current.base_url,
+                        redirect_uri=oauth.redirect_uri_for(self._config.redirect_port),
                         allow_custom_host=self._config.allow_custom_host,
                     )
             except DeputyAuthError:
@@ -264,10 +280,17 @@ class DeputyHTTP:
                     f"Could not refresh the Deputy OAuth token: {exc.message}",
                     hint="Run 'deputy-mcp login' again.",
                 ) from exc
-            self._oauth_tokens = new_tokens
-            self._client.headers["Authorization"] = f"Bearer {new_tokens.access_token}"
+            # The old refresh token is already spent: adopt the new pair in memory first so
+            # this process keeps working even if persisting it then fails (that failure
+            # still propagates, because the next process would otherwise be signed out).
+            self._apply_tokens(new_tokens)
             if self._token_store is not None:
-                self._token_store.save(new_tokens)
+                await asyncio.to_thread(self._token_store.save, new_tokens)
+
+    def _apply_tokens(self, tokens: OAuthTokens) -> None:
+        """Switch the transport to ``tokens`` for every subsequent request."""
+        self._oauth_tokens = tokens
+        self._client.headers["Authorization"] = f"Bearer {tokens.access_token}"
 
     def invalidate(self) -> None:
         """Clear the entire read cache (called after every write)."""

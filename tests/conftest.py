@@ -23,8 +23,11 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import keyring
 import pytest
 import respx
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
 from pydantic import SecretStr
 
 from deputy_mcp.config import DEPUTY_ENV_VARS, DeputyConfig
@@ -61,6 +64,52 @@ _ISOLATION_VARS: tuple[str, ...] = ("DEPUTY_ENV_FILE", "DEPUTY_TOKEN_STORE")
 _DEPUTY_VARS: tuple[str, ...] = tuple(
     name for name in DEPUTY_ENV_VARS if name not in _ISOLATION_VARS
 )
+
+
+class MemoryKeyring(KeyringBackend):
+    """In-process keyring backend so no test ever reads or writes the real OS keychain."""
+
+    priority = 1  # type: ignore[assignment]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entries: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.entries.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.entries[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        if self.entries.pop((service, username), None) is None:
+            raise PasswordDeleteError("not found")
+
+
+@pytest.fixture(autouse=True)
+def memory_keyring(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[MemoryKeyring]:
+    """Swap the keyring backend for an in-memory one and isolate the home directory.
+
+    ``HOME``/``USERPROFILE`` point at a temp dir so the legacy ``~/.deputy-mcp/token.json``
+    migration path can never touch a developer's real file. Tests marked ``live`` opt out
+    because they are meant to use the real signed-in credentials.
+    """
+    backend = MemoryKeyring()
+    if request.node.get_closest_marker("live") is not None:
+        yield backend
+        return
+    previous = keyring.get_keyring()
+    keyring.set_keyring(backend)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    try:
+        yield backend
+    finally:
+        keyring.set_keyring(previous)
 
 
 @pytest.fixture(autouse=True)

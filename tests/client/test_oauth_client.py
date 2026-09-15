@@ -29,7 +29,8 @@ import respx
 
 from deputy_mcp.client import DeputyAuthError, DeputyClient, DeputyError
 from deputy_mcp.config import DeputyConfig
-from deputy_mcp.oauth import TOKEN_URL, OAuthTokens, TokenStore
+from deputy_mcp.oauth import refresh_url
+from deputy_mcp.token_store import FileTokenStore, OAuthTokens
 
 _INSTALL = "https://cloud-nine-cafe.eu.deputy.com"
 _API_BASE = f"{_INSTALL}/api/v1"
@@ -46,7 +47,7 @@ def _write_tokens(
     expires_at: float | None = None,
 ) -> None:
     """Persist a fictional token set (default: valid for another hour) to ``path``."""
-    TokenStore(path).save(
+    FileTokenStore(path).save(
         OAuthTokens(
             access_token=access,
             refresh_token=refresh,
@@ -96,7 +97,9 @@ async def test_oauth_client_refreshes_on_401_and_persists(
                 httpx.Response(200, json=[roster]),
             ]
         )
-        token_route = router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=refreshed))
+        token_route = router.post(refresh_url(_INSTALL)).mock(
+            return_value=httpx.Response(200, json=refreshed)
+        )
         try:
             rosters = await client.get_my_roster(start, end)
         finally:
@@ -107,7 +110,7 @@ async def test_oauth_client_refreshes_on_401_and_persists(
     assert token_route.call_count == 1
     assert roster_route.call_count == 2
     # The new token set was persisted to the store for reuse next run.
-    reloaded = TokenStore(store_path).load()
+    reloaded = FileTokenStore(store_path).load()
     assert reloaded is not None
     assert reloaded.access_token == "new-access"
     assert reloaded.refresh_token == "refresh-2"
@@ -125,7 +128,9 @@ async def test_oauth_client_refresh_failure_raises_actionable_error(tmp_path: Pa
     client = DeputyClient(config)
     with respx.mock(assert_all_called=False) as router:
         router.get(_ROSTER_URL).mock(return_value=httpx.Response(401, json={"error": "expired"}))
-        router.post(TOKEN_URL).mock(return_value=httpx.Response(400, text="invalid_grant"))
+        router.post(refresh_url(_INSTALL)).mock(
+            return_value=httpx.Response(400, text="invalid_grant")
+        )
         try:
             with pytest.raises(DeputyAuthError) as excinfo:
                 await client.get_my_roster(start, end)
@@ -149,7 +154,9 @@ async def test_oauth_client_get_my_roster_happy_path(
     assert client.mode == "api"  # OAuth is a full-surface api-mode client
     with respx.mock(assert_all_called=False) as router:
         roster_route = router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[roster]))
-        token_route = router.post(TOKEN_URL).mock(return_value=httpx.Response(200, json={}))
+        token_route = router.post(refresh_url(_INSTALL)).mock(
+            return_value=httpx.Response(200, json={})
+        )
         try:
             rosters = await client.get_my_roster(start, end)
         finally:

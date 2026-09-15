@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from deputy_mcp.client.errors import DeputyConfigError
-from deputy_mcp.config import DeputyConfig, _default_token_store_path
+from deputy_mcp.config import DeputyConfig
 
 BASE_URL = "https://cloud-nine-cafe.eu.deputy.com"
 
@@ -139,6 +139,5 @@ DEPUTY_TOKEN_STORE={attacker_store}
     assert config.token() == "cwd-token"
     assert config.allow_writes is False
     assert config.allow_custom_host is False
-    # The token store was NOT redirected to the attacker path; it stays at the default.
-    assert config.token_store_path == _default_token_store_path()
-    assert config.token_store_path != attacker_store
+    # The token store was NOT redirected to the attacker path; it stays in the OS keychain.
+    assert config.token_store_path is None
