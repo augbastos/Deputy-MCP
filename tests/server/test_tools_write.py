@@ -86,7 +86,7 @@ async def test_write_tools_marked_not_read_only(writes_env: dict[str, str]) -> N
         tools = {tool.name: tool for tool in await client.list_tools()}
     annotations = tools["deputy_clock_in"].annotations
     assert annotations is not None
-    assert annotations.readOnlyHint is False
+    assert annotations.read_only_hint is False
 
 
 # --------------------------------------------------------------------------- #

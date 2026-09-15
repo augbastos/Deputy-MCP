@@ -32,6 +32,7 @@ from deputy_mcp.server.tools_read import resolve_client_timezone
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 
     from deputy_mcp.client import DeputyClient
 
@@ -41,15 +42,7 @@ __all__ = ["register"]
 #: :class:`~deputy_mcp.client.DeputyClient` that ``app.py`` builds once in its lifespan.
 ClientProvider = Callable[[], "DeputyClient"]
 
-#: MCP behaviour hints shared by all write tools (see module docstring).
-_WRITE_ANNOTATIONS: dict[str, Any] = {
-    "readOnlyHint": False,
-    "destructiveHint": False,
-    "idempotentHint": False,
-    "openWorldHint": True,
-}
-
-#: RosterSwap.Status integer -> human label (see deputy-api-write.md §2).
+#: RosterSwap.Status integer -> human label (Deputy's documented RosterSwap status codes).
 _SWAP_STATUS_LABELS: dict[int | None, str] = {
     0: "Not required",
     1: "Pending Out",
@@ -65,7 +58,20 @@ _SWAP_STATUS_LABELS: dict[int | None, str] = {
 # --------------------------------------------------------------------------- #
 # Registration
 # --------------------------------------------------------------------------- #
-def register(mcp: FastMCP, get_client: ClientProvider) -> None:
+def _write_annotations(title: str) -> ToolAnnotations:
+    """MCP behaviour hints shared by every write tool (see the module docstring)."""
+    from mcp.types import ToolAnnotations
+
+    return ToolAnnotations(
+        title=title,
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=False,
+        open_world_hint=True,
+    )
+
+
+def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
     """Register the five Deputy write tools on ``mcp``.
 
     Called by :func:`deputy_mcp.server.app.create_server` **only** when
@@ -79,7 +85,7 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
 
     @mcp.tool(
         name="deputy_claim_open_shift",
-        annotations={**_WRITE_ANNOTATIONS, "title": "Claim open shift"},
+        annotations=_write_annotations("Claim open shift"),
     )
     async def deputy_claim_open_shift(
         shift_id: Annotated[
@@ -116,7 +122,7 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
 
     @mcp.tool(
         name="deputy_request_shift_swap",
-        annotations={**_WRITE_ANNOTATIONS, "title": "Request shift swap"},
+        annotations=_write_annotations("Request shift swap"),
     )
     async def deputy_request_shift_swap(
         shift_id: Annotated[
@@ -165,7 +171,7 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
 
     @mcp.tool(
         name="deputy_set_unavailability",
-        annotations={**_WRITE_ANNOTATIONS, "title": "Set unavailability"},
+        annotations=_write_annotations("Set unavailability"),
     )
     async def deputy_set_unavailability(
         start: Annotated[
@@ -234,7 +240,7 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
 
     @mcp.tool(
         name="deputy_clock_in",
-        annotations={**_WRITE_ANNOTATIONS, "title": "Clock in"},
+        annotations=_write_annotations("Clock in"),
     )
     async def deputy_clock_in(
         area_id: Annotated[
@@ -286,7 +292,7 @@ def register(mcp: FastMCP, get_client: ClientProvider) -> None:
 
     @mcp.tool(
         name="deputy_clock_out",
-        annotations={**_WRITE_ANNOTATIONS, "title": "Clock out"},
+        annotations=_write_annotations("Clock out"),
     )
     async def deputy_clock_out(
         mealbreak_minutes: Annotated[

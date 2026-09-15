@@ -62,6 +62,7 @@ from deputy_mcp.server.formatting import (
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 
 __all__ = ["register", "resolve_client_timezone"]
 
@@ -137,7 +138,9 @@ def register(
     ``deputy_whoami``); the API-only tools are left unregistered so the advertised tool
     list is honest about what actually works.
     """
-    read_only = {"readOnlyHint": True, "openWorldHint": True}
+    from mcp.types import ToolAnnotations
+
+    read_only = ToolAnnotations(read_only_hint=True, open_world_hint=True)
 
     @mcp.tool(name="deputy_whoami", annotations=read_only)
     async def deputy_whoami(
@@ -302,7 +305,7 @@ def register(
 
 
 def _register_api_tools(
-    mcp: FastMCP[Any], get_client: ClientProvider, read_only: dict[str, bool]
+    mcp: FastMCP[Any], get_client: ClientProvider, read_only: ToolAnnotations
 ) -> None:
     """Register the read tools that require a Deputy API token (api mode only).
 

@@ -1,6 +1,6 @@
 [project]
 name = "deputy-mcp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Open-source MCP server for Deputy (deputy.com) — query rosters, timesheets and manage shifts from any MCP client"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,9 +30,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "fastmcp>=3.4,<4",
+    "fastmcp>=4.0.3,<5",
     "httpx>=0.27",
-    "pydantic>=2.7",
+    "pydantic>=2.12",
     "python-dotenv>=1.0",
     # Ships the IANA tz database for zoneinfo.ZoneInfo. Windows and slim Linux
     # images have no system tzdb, so the iCal roster parser (client/ical.py)
@@ -60,6 +60,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/deputy_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deputy_mcp"]

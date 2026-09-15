@@ -25,7 +25,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Literal
 
-from deputy_mcp import __version__
+from deputy_mcp import PROJECT_URL, __version__
 from deputy_mcp.client import DeputyClient
 from deputy_mcp.server import prompts, resources, tools_read
 
@@ -50,21 +50,25 @@ def _instructions(*, allow_writes: bool, mode: Literal["api", "ical"]) -> str:
             "response_format='markdown' (default) or 'json'. Dates are ISO YYYY-MM-DD; "
             "times are shown in UTC unless the feed carries a timezone."
         )
-    writes_state = "enabled" if allow_writes else "disabled (read-only)"
     base = (
-        "Query and manage Deputy (deputy.com) workforce data: rosters, shifts, "
-        "timesheets, employees and areas. Read tools cover your own and the team's "
-        "roster, who is working now, employee lookup, shift search, areas and "
-        "timesheets. Every tool accepts response_format='markdown' (default) or "
-        "'json'. Dates are ISO YYYY-MM-DD; times are shown in the install timezone."
+        "Query Deputy (deputy.com) workforce data: rosters, shifts, timesheets, employees "
+        "and areas. For questions about the signed-in user's own schedule, hours or "
+        "colleagues, use the self-service tools (deputy_get_my_roster, deputy_next_shift "
+        "without an employee, deputy_get_my_timesheets, deputy_get_my_colleagues); they work "
+        "at any Deputy access level. Team tools (deputy_get_team_roster, "
+        "deputy_who_is_working, deputy_get_employee_info, deputy_search_shifts) need a "
+        "manager or administrator access level and answer with a short permission message "
+        "otherwise. Every tool accepts response_format='markdown' (default) or 'json'. "
+        "Dates are ISO YYYY-MM-DD; times are shown in the install timezone."
     )
     writes = (
-        " Write tools (claim open shift, request swap, set unavailability, clock "
-        "in/out) are available."
+        " Write tools are enabled (claim open shift, request swap, set unavailability, "
+        "clock in/out). Only call one when the user explicitly asks for that change."
         if allow_writes
-        else " Write actions are disabled; set DEPUTY_ALLOW_WRITES=true to enable them."
+        else " Write actions are disabled (read-only); the operator can enable them with "
+        "DEPUTY_ALLOW_WRITES=true."
     )
-    return f"{base}{writes} Write actions are currently {writes_state}."
+    return f"{base}{writes}"
 
 
 def create_server() -> FastMCP[dict[str, Any]]:
@@ -90,10 +94,15 @@ def create_server() -> FastMCP[dict[str, Any]]:
     mode = client.mode
     allow_writes = client.config.allow_writes and mode == "api"
     mcp: FastMCP[dict[str, Any]] = FastMCP(
-        name="deputy_mcp",
+        name="deputy-mcp",
         version=__version__,
         instructions=_instructions(allow_writes=allow_writes, mode=mode),
+        website_url=PROJECT_URL,
         lifespan=lifespan,
+        # Tools turn every DeputyError into a short, sanitized message. Anything else
+        # that escapes (a bug, or a pydantic ValidationError echoing a raw Deputy record)
+        # must not reach the model verbatim, so FastMCP masks its details.
+        mask_error_details=True,
     )
 
     provider: Callable[[], DeputyClient] = get_client

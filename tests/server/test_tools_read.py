@@ -75,7 +75,7 @@ async def test_read_tools_are_marked_read_only() -> None:
         tools = {tool.name: tool for tool in await client.list_tools()}
     annotations = tools["deputy_whoami"].annotations
     assert annotations is not None
-    assert annotations.readOnlyHint is True
+    assert annotations.read_only_hint is True
 
 
 # --------------------------------------------------------------------------- #
