@@ -277,15 +277,15 @@ already applied, and replaying a clock-in creates a second timesheet.
 
 **Hosts are an allowlist that fails closed.** The bearer token is only ever sent to
 `*.deputy.com` unless `DEPUTY_ALLOW_CUSTOM_HOST` is set. The same check covers the
-install host returned by the OAuth token endpoint and the host a stored token is
-refreshed against, so neither a tampered response nor a tampered token store can
-redirect credentials.
+install host returned by the OAuth token endpoint and the host recorded with a stored
+token, before that token is used or refreshed, so neither a tampered response nor a
+tampered token store can redirect credentials.
 
 **Credentials are handled as data that must not escape.** Tokens and secrets are
 pydantic `SecretStr` or redacted in `repr`. OAuth tokens live in the OS keychain through
 `keyring`, with no custom cryptography; the plaintext file store is an explicit opt-in.
-Refresh follows Deputy's rotating-refresh-token model: refreshes are serialised per
-process, the store is re-read first so a token another process already rotated is
+Keychain reads run in a worker thread, never on the event loop. Refresh follows
+Deputy's rotating-refresh-token model: refreshes are serialised per process, the store is re-read first so a token another process already rotated is
 adopted rather than spent twice, and the new pair is persisted immediately. Every error
 message the tools, resources and CLI render passes through one sanitiser that
 removes bearer tokens, JWTs, OAuth codes, client secrets, emails, calendar-feed paths and

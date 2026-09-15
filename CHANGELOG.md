@@ -36,8 +36,13 @@ All notable changes to Deputy MCP. The format follows
   redirect URI, as Deputy documents. It previously posted to `once.deputy.com`, which
   answers a refresh with "We did not detect 'code' in POST call", so an expired access
   token meant logging in again.
+- A token loaded from the keychain or token file is checked against the `*.deputy.com`
+  allowlist before use; previously a tampered store could redirect the bearer token.
 - A login performed while the server runs takes effect without a restart, and a token
-  already rotated by another process is adopted instead of refreshed twice.
+  already rotated by another process is adopted instead of refreshed twice. The keychain
+  is read in a worker thread, not on the event loop.
+- Redaction examines only the head of an error body, so a hostile multi-megabyte body
+  can no longer stall the server.
 - `deputy-mcp next --employee NAME` no longer picks the first of several matching
   employees.
 - Your own shifts read "You" in API mode, as they already did in iCal mode.
