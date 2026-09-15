@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 from deputy_mcp.client import DeputyError, DeputyPermissionError
+from deputy_mcp.sanitize import redact
 
 __all__ = [
     "format_error",
@@ -36,14 +37,16 @@ def format_error(exc: DeputyError) -> str:
     A permission failure (HTTP 403) from a manager/admin-only tool is rewritten to point
     the caller at the self-service tools that work at an employee access level, so the
     model never sees a raw 403 and always has a working next step. Every other error keeps
-    the client's own message/hint.
+    the client's own message/hint. The result always passes through
+    :func:`deputy_mcp.sanitize.redact`, the last line of defence before text reaches the
+    model.
     """
     if isinstance(exc, DeputyPermissionError):
-        return f"Error: {exc.message}\nHint: {_SELF_SERVICE_HINT}"
+        return redact(f"Error: {exc.message}\nHint: {_SELF_SERVICE_HINT}")
     text = f"Error: {exc.message}"
     if exc.hint:
         text += f"\nHint: {exc.hint}"
-    return text
+    return redact(text)
 
 
 def today() -> date:

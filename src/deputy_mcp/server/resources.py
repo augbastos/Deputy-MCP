@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from deputy_mcp.client import DeputyClient, DeputyError
+from deputy_mcp.server._read_helpers import format_error
 from deputy_mcp.server.formatting import render_roster_list
 from deputy_mcp.server.tools_read import resolve_client_timezone
 
@@ -44,8 +45,7 @@ async def _render_week(client: DeputyClient, offset_weeks: int, label: str) -> s
         rosters = await client.get_my_roster(start, end)
         tz, tz_label = await resolve_client_timezone(client)
     except DeputyError as exc:
-        hint = f"\nHint: {exc.hint}" if exc.hint else ""
-        return f"### {label}\n\nCould not load roster.\nError: {exc.message}{hint}"
+        return f"### {label}\n\nCould not load roster.\n{format_error(exc)}"
     title = f"{label} ({start.isoformat()} to {end.isoformat()})"
     return render_roster_list(rosters, tz, tz_label, title=title)
 

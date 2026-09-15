@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 
 from deputy_mcp.client.errors import DeputyError
+from deputy_mcp.sanitize import redact
 from deputy_mcp.server.formatting import ResponseFormat, fmt_ts, render
 from deputy_mcp.server.tools_read import resolve_client_timezone
 
@@ -413,7 +414,7 @@ def _format_error(exc: DeputyError) -> str:
     lines = [f"Deputy write did not complete: {exc.message}"]
     if exc.hint:
         lines.append(f"Hint: {exc.hint}")
-    return "\n".join(lines)
+    return redact("\n".join(lines))
 
 
 def _parse_iso(value: str, field: str) -> datetime:

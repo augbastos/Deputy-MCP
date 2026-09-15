@@ -50,6 +50,7 @@ from deputy_mcp.render import (
     resolve_timezone,
     to_json,
 )
+from deputy_mcp.sanitize import redact
 
 __all__ = ["main"]
 
@@ -354,8 +355,8 @@ def _serve() -> int:
 # Entry point
 # --------------------------------------------------------------------------- #
 def _fail(exc: DeputyError) -> None:
-    """Print a single actionable error line to stderr."""
-    print(f"deputy-mcp error: {exc}", file=sys.stderr)
+    """Print a single actionable, redacted error line to stderr."""
+    print(f"deputy-mcp error: {redact(str(exc))}", file=sys.stderr)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

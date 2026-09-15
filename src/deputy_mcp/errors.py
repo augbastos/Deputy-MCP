@@ -3,9 +3,11 @@
 Every failure surfaced to callers is a :class:`DeputyError` (or a subclass), so
 MCP tools and the CLI can translate them into a single, actionable message
 instead of leaking a raw traceback. Errors never carry request headers or the
-API token; response bodies are truncated to a short snippet.
+API token; response bodies are reduced to a short, redacted excerpt by
+:func:`deputy_mcp.sanitize.snippet`.
 
-This module imports **nothing** from the ``deputy_mcp`` package. It is the leaf
+This module imports only the stdlib-only :mod:`deputy_mcp.sanitize` leaf from the
+``deputy_mcp`` package. It is the leaf
 that :mod:`deputy_mcp.config` (and, transitively, the client package) depends on,
 so the error hierarchy can be imported without pulling in the client package —
 that is what keeps ``config`` from importing ``client`` and breaks the historical
@@ -14,8 +16,10 @@ that is what keeps ``config`` from importing ``client`` and breaks the historica
 
 from __future__ import annotations
 
+from deputy_mcp.sanitize import SNIPPET_LIMIT, snippet
+
 #: Maximum number of characters kept from an API response body on an error.
-BODY_SNIPPET_LIMIT = 300
+BODY_SNIPPET_LIMIT = SNIPPET_LIMIT
 
 
 class DeputyError(Exception):
@@ -172,7 +176,7 @@ class DeputyFeedError(DeputyError):
 class DeputyAPIError(DeputyError):
     """Any other 4xx/5xx response.
 
-    Carries a truncated snippet of the response body (never the request headers
+    Carries a short, redacted excerpt of the response body (never the request headers
     or token) to aid debugging.
     """
 
@@ -191,15 +195,8 @@ class DeputyAPIError(DeputyError):
 
 
 def _truncate_body(body: str | None) -> str | None:
-    """Trim a response body to :data:`BODY_SNIPPET_LIMIT` characters."""
-    if body is None:
-        return None
-    trimmed = body.strip()
-    if not trimmed:
-        return None
-    if len(trimmed) > BODY_SNIPPET_LIMIT:
-        return trimmed[:BODY_SNIPPET_LIMIT] + "..."
-    return trimmed
+    """Reduce a response body to a redacted excerpt of at most :data:`BODY_SNIPPET_LIMIT`."""
+    return snippet(body, limit=BODY_SNIPPET_LIMIT)
 
 
 __all__ = [

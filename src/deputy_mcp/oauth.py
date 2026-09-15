@@ -41,6 +41,7 @@ from deputy_mcp.errors import (
     DeputyConfigError,
     DeputyError,
 )
+from deputy_mcp.sanitize import snippet
 
 if TYPE_CHECKING:
     from deputy_mcp.config import DeputyConfig
@@ -278,7 +279,7 @@ async def _post_token(
         raise DeputyError(msg, hint=_LOGIN_HINT) from exc
 
     if response.status_code >= 400:
-        body = _redact(response.text, scrub)
+        body = snippet(response.text, secrets=scrub)
         message = f"Deputy rejected the OAuth token request (HTTP {response.status_code})."
         if body:
             message = f"{message} Response: {body}"
@@ -508,21 +509,6 @@ def _coerce_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(default)
-
-
-def _redact(text: str | None, secrets_to_scrub: tuple[str, ...]) -> str | None:
-    """Trim a response body and mask any known secret substrings it echoes."""
-    if not text:
-        return None
-    trimmed = text.strip()
-    if not trimmed:
-        return None
-    for secret in secrets_to_scrub:
-        if secret:
-            trimmed = trimmed.replace(secret, "***")
-    if len(trimmed) > 300:
-        trimmed = trimmed[:300] + "..."
-    return trimmed
 
 
 def _safe_token(value: str) -> str:
