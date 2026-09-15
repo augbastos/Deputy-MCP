@@ -46,7 +46,7 @@ from deputy_mcp.client.models import (
 from deputy_mcp.client.reads import EMPLOYEE_JOIN, ReadsMixin
 from deputy_mcp.client.writes import WritesMixin
 from deputy_mcp.config import DeputyConfig
-from deputy_mcp.token_store import TokenStore, resolve_token_store
+from deputy_mcp.token_store import resolve_token_store
 
 __all__ = [
     "EMPLOYEE_JOIN",
@@ -110,13 +110,11 @@ class DeputyClient(ReadsMixin, WritesMixin):
 
         * **static** — the authenticated HTTP transport is created eagerly from the
           permanent token and base URL.
-        * **oauth** — the token store (OS keychain by default) is loaded; if it holds
-          tokens the transport is built from them (with the store, so it can refresh +
-          persist on expiry). If nothing is stored yet the transport is left unbuilt and
-          the store is consulted again on each use, so a ``deputy-mcp login`` run while
-          the server is up takes effect without a restart; until then ``_http`` raises a
-          "run deputy-mcp login first" error — a tool call fails cleanly rather than
-          crashing at construction.
+        * **oauth** — the transport is created with the token store (OS keychain by
+          default) and loads the stored tokens itself, off the event loop, on the first
+          request. Nothing is read at construction, a ``deputy-mcp login`` run while the
+          server is up takes effect without a restart, and until then a request fails with
+          a "run deputy-mcp login first" error rather than crashing at construction.
         * **ical** — no transport (and no token) exists; an :class:`IcalRosterSource`
           is held instead and ``_http`` raises the iCal-only error on use.
         """
@@ -124,14 +122,12 @@ class DeputyClient(ReadsMixin, WritesMixin):
         self._own_employee_id: int | None = None
         self._transport: DeputyHTTP | None = None
         self._ical_source: IcalRosterSource | None = None
-        self._token_store: TokenStore | None = None
         if config.auth_kind == "static":
             self._http = DeputyHTTP(config)
         elif config.auth_kind == "oauth":
-            self._token_store = resolve_token_store(config.token_store_path)
-            # OAuth creds are set but a token may not have been minted yet. If so the
-            # transport stays unbuilt and ``_http`` retries the store on use.
-            self._connect_oauth()
+            self._http = DeputyHTTP(
+                config, token_store=resolve_token_store(config.token_store_path)
+            )
         else:
             self._ical_source = IcalRosterSource(
                 config.calendar_url_value(),
@@ -164,39 +160,13 @@ class DeputyClient(ReadsMixin, WritesMixin):
         token" error — that is how the whole API surface fails closed without duplicating a
         guard in each method.
         """
-        transport = self._transport or self._connect_oauth()
-        if transport is None:
-            if self._token_store is not None:
-                raise self._login_required_error()
+        if self._transport is None:
             raise self._ical_only_error()
-        return transport
+        return self._transport
 
     @_http.setter
     def _http(self, value: DeputyHTTP) -> None:
         self._transport = value
-
-    def _connect_oauth(self) -> DeputyHTTP | None:
-        """Build the OAuth transport from the stored tokens; ``None`` when none exist."""
-        if self._token_store is None:
-            return None
-        tokens = self._token_store.load()
-        if tokens is None:
-            return None
-        self._transport = DeputyHTTP(
-            self._config, oauth_tokens=tokens, token_store=self._token_store
-        )
-        return self._transport
-
-    def _login_required_error(self) -> DeputyError:
-        """The error raised when the API is used in OAuth mode before ``login`` ran."""
-        return DeputyError(
-            "not signed in to Deputy: no OAuth token found — run 'deputy-mcp login' first",
-            hint=(
-                "Register an app at https://once.deputy.com/my/oauth_clients (redirect "
-                "http://localhost:8823/callback), set DEPUTY_OAUTH_CLIENT_ID and "
-                "DEPUTY_OAUTH_CLIENT_SECRET, then run 'deputy-mcp login'."
-            ),
-        )
 
     def _ical_only_error(self) -> DeputyError:
         """The error raised when an API-only capability is used in iCal mode."""

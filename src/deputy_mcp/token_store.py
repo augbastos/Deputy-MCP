@@ -227,16 +227,13 @@ class KeyringTokenStore:
         _keyring("save the OAuth token to", "set_password", tokens.to_json())
 
     def delete(self) -> bool:
-        import keyring.errors
-
+        # Look before deleting: backends disagree on what a failed delete raises (macOS
+        # reports every Keychain error, a locked keychain included, as "not found"), so
+        # the exception type cannot tell "nothing stored" from "could not delete".
         removed = False
-        try:
+        if _keyring("read the OAuth token from", "get_password") is not None:
             _keyring("remove the OAuth token from", "delete_password")
             removed = True
-        except DeputyConfigError as exc:
-            # "Nothing stored" is not a failure for logout; a broken keychain still is.
-            if not isinstance(exc.__cause__, keyring.errors.PasswordDeleteError):
-                raise
         if self._legacy_path is not None and FileTokenStore(self._legacy_path).delete():
             removed = True
         return removed

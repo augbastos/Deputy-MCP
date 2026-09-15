@@ -21,8 +21,9 @@ from keyring.backends import fail
 
 from deputy_mcp import cli, oauth
 from deputy_mcp.client import DeputyClient
+from deputy_mcp.client.http import DeputyHTTP
 from deputy_mcp.config import DeputyConfig
-from deputy_mcp.errors import DeputyConfigError, DeputyError
+from deputy_mcp.errors import DeputyAuthError, DeputyConfigError, DeputyError
 from deputy_mcp.token_store import (
     KEYRING_SERVICE,
     FileTokenStore,
@@ -241,3 +242,100 @@ async def test_login_while_the_server_runs_takes_effect_without_restart() -> Non
             roster = router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
             await client.get_my_roster(*_WINDOW)
     assert roster.calls.last.request.headers["authorization"] == "Bearer fresh-login-acc"
+
+
+# --------------------------------------------------------------------------- #
+# A tampered store cannot redirect the bearer token
+# --------------------------------------------------------------------------- #
+async def test_tampered_store_host_is_refused_before_any_request() -> None:
+    KeyringTokenStore().save(
+        OAuthTokens("acc-must-stay-home", "ref", _FUTURE, base_url="https://evil.example.org")
+    )
+    with respx.mock(assert_all_called=False) as router:
+        evil = router.route(host="evil.example.org")
+        async with DeputyClient(_oauth_config()) as client:
+            with pytest.raises(DeputyAuthError, match="not a Deputy install"):
+                await client.get_my_roster(*_WINDOW)
+    assert evil.call_count == 0
+
+
+def test_transport_refuses_a_non_deputy_token_host_at_construction() -> None:
+    evil = OAuthTokens("acc", "ref", _FUTURE, base_url="https://deputy.com.evil.example.org")
+    with pytest.raises(DeputyAuthError):
+        DeputyHTTP(_oauth_config(), oauth_tokens=evil)
+
+
+async def test_token_for_another_install_is_not_adopted_during_refresh(
+    memory_keyring: Any,
+) -> None:
+    # First read (initial load): our expired token. Second read (the refresh re-check):
+    # a fresh token another process stored for a different install. It must be ignored.
+    other = OAuthTokens("other-acc", "other-ref", _FUTURE, "https://other.eu.deputy.com")
+    answers = iter([_tokens(access="stale-acc", expires=_PAST).to_json(), other.to_json()])
+    memory_keyring.get_password = lambda service, username: next(answers, None)
+    with respx.mock(assert_all_called=False) as router:
+        roster = router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
+        token = router.post(oauth.refresh_url(_ORIGIN)).mock(
+            return_value=httpx.Response(200, json=_token_body("new-acc", "new-ref"))
+        )
+        async with DeputyClient(_oauth_config()) as client:
+            await client.get_my_roster(*_WINDOW)
+    assert token.call_count == 1
+    assert roster.calls.last.request.headers["authorization"] == "Bearer new-acc"
+    assert str(roster.calls.last.request.url).startswith(_ORIGIN)
+
+
+# --------------------------------------------------------------------------- #
+# The keychain is never read on the event loop, nor at construction
+# --------------------------------------------------------------------------- #
+async def test_keychain_is_read_off_the_event_loop_and_not_at_construction(
+    memory_keyring: Any,
+) -> None:
+    import threading
+
+    reads: list[bool] = []
+    original = memory_keyring.get_password
+    loop_thread = threading.get_ident()
+
+    def spying_get(service: str, username: str) -> str | None:
+        reads.append(threading.get_ident() == loop_thread)
+        return original(service, username)
+
+    memory_keyring.get_password = spying_get
+    KeyringTokenStore().save(_tokens())
+    reads.clear()
+    client = DeputyClient(_oauth_config())
+    assert reads == []  # nothing read while the server is being built
+    with respx.mock(assert_all_called=False) as router:
+        router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
+        try:
+            await asyncio.gather(*(client.get_my_roster(*_WINDOW) for _ in range(5)))
+        finally:
+            await client.aclose()
+    assert reads == [False]  # one read, in a worker thread, shared by concurrent calls
+
+
+# --------------------------------------------------------------------------- #
+# Logout never reports success when the keychain could not delete
+# --------------------------------------------------------------------------- #
+class _LockedDeleteBackend(KeyringBackend):
+    """Like macOS: any delete failure surfaces as PasswordDeleteError."""
+
+    priority = 1  # type: ignore[assignment]
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return _tokens().to_json()
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        return None
+
+    def delete_password(self, service: str, username: str) -> None:
+        from keyring.errors import PasswordDeleteError
+
+        raise PasswordDeleteError("keychain is locked")
+
+
+def test_failed_keychain_delete_is_an_error_not_nothing_to_remove() -> None:
+    keyring.set_keyring(_LockedDeleteBackend())
+    with pytest.raises(DeputyConfigError, match="remove the OAuth token"):
+        KeyringTokenStore().delete()

@@ -27,6 +27,10 @@ __all__ = ["REDACTED", "SNIPPET_LIMIT", "redact", "snippet"]
 REDACTED = "[REDACTED]"
 #: Maximum characters kept from a response body excerpt.
 SNIPPET_LIMIT = 300
+#: How much of a raw body is examined at all. Redaction runs several regexes whose cost
+#: grows faster than linearly on hostile input, so an unbounded body could stall the
+#: event loop; nothing past this point can reach the excerpt anyway.
+_SCAN_LIMIT = SNIPPET_LIMIT * 4
 
 #: Keys whose values are secrets whenever they appear as ``key=value`` / ``"key": value``.
 _SECRET_KEYS = (
@@ -83,15 +87,22 @@ def snippet(
 
     HTML bodies (proxy or gateway error pages) are summarised instead of quoted, control
     characters are dropped and whitespace is collapsed so a body cannot smuggle a
-    multi-line block into the message. Returns ``None`` for an empty body.
+    multi-line block into the message. Only the first :data:`_SCAN_LIMIT` characters are
+    examined, which bounds the cost of redaction. Returns ``None`` for an empty body.
     """
-    if body is None or not body.strip():
+    if body is None:
         return None
-    if _HTML.match(body):
+    for secret in secrets:
+        if secret:
+            body = body.replace(secret, REDACTED)  # before slicing, so none is cut in half
+    head = body[:_SCAN_LIMIT]
+    if not head.strip():
+        return None
+    if _HTML.match(head):
         return "[HTML error page omitted]"
-    cleaned = _WHITESPACE.sub(" ", _CONTROL.sub("", body)).strip()
+    cleaned = _WHITESPACE.sub(" ", _CONTROL.sub("", head)).strip()
     cleaned = redact(cleaned, secrets=secrets)
-    if len(cleaned) > limit:
+    if len(cleaned) > limit or len(body) > _SCAN_LIMIT:
         return cleaned[:limit] + "..."
     return cleaned
 

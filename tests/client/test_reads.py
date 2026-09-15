@@ -204,10 +204,17 @@ async def test_get_my_roster_past_window_queries_by_own_id(
     monkeypatch.setattr(reads_module, "_utc_today", lambda: date(2021, 1, 10))
     deputy_api.get("/me").mock(return_value=httpx.Response(200, json=_me_payload()))
     route = deputy_api.post("/resource/Roster/QUERY").mock(
-        return_value=httpx.Response(200, json=[make_roster(Id=9, Date="2021-01-02")])
+        return_value=httpx.Response(
+            200,
+            json=[
+                make_roster(Id=9, Date="2021-01-02", EmployeeObject={"DisplayName": "Alex Rivera"})
+            ],
+        )
     )
     result = await client.get_my_roster(date(2021, 1, 1), date(2021, 1, 7))
     assert [r.Id for r in result] == [9]
+    # Your own shifts read "You" whichever source answered, as on the /my/roster path.
+    assert (result[0].model_extra or {})["EmployeeObject"] == {"DisplayName": "You"}
     assert _posted_body(route) == {
         "search": {
             "s1": {"field": "Employee", "type": "eq", "data": 101},

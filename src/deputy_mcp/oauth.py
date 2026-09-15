@@ -157,7 +157,7 @@ async def refresh(
     refresh token are sent to it, so a tampered token store cannot redirect them. Deputy
     rotates the refresh token on every call; the caller must persist the returned pair.
     """
-    _require_deputy_host(base_url, allow_custom_host=allow_custom_host)
+    require_deputy_host(base_url, allow_custom_host=allow_custom_host)
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -250,7 +250,7 @@ def _tokens_from_response(
             hint="The token response shape may have changed. " + _LOGIN_HINT,
         )
     base_url = normalize_base_url(endpoint)
-    _require_deputy_host(base_url, allow_custom_host=allow_custom_host)
+    require_deputy_host(base_url, allow_custom_host=allow_custom_host)
 
     return OAuthTokens(
         access_token=access,
@@ -260,7 +260,7 @@ def _tokens_from_response(
     )
 
 
-def _require_deputy_host(base_url: str, *, allow_custom_host: bool) -> None:
+def require_deputy_host(base_url: str, *, allow_custom_host: bool) -> None:
     """Refuse an install host outside ``*.deputy.com`` unless custom hosts are allowed.
 
     The same fail-closed allowlist static-token mode enforces via
@@ -466,5 +466,6 @@ __all__ = [
     "redirect_uri_for",
     "refresh",
     "refresh_url",
+    "require_deputy_host",
     "run_login_flow",
 ]

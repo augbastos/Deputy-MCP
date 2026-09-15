@@ -108,17 +108,33 @@ jobs:
           # workflow diff is held to a SHAPE, not a category: added and removed
           # lines may only be `uses:` lines or comments - i.e. a pin move, which
           # is the one workflow edit the maintenance loop is designed to produce.
+          # A pin move also keeps the same actions: swapping owner/repo in a `uses:`
+          # line would run someone else's code, so the actions named by removed
+          # lines must be exactly the actions named by added lines.
           if printf '%s\n' "$files" | grep -q ' \.github/workflows/'; then
-            offending=$(gh api "repos/$REPO/pulls/$pr" \
-                          -H "Accept: application/vnd.github.v3.diff" \
-                        | grep -E '^[+-]' \
-                        | grep -vE '^(\+\+\+|---)' \
+            changes=$(gh api "repos/$REPO/pulls/$pr" \
+                        -H "Accept: application/vnd.github.v3.diff" \
+                      | grep -E '^[+-]' \
+                      | grep -vE '^(\+\+\+|---)' \
+                      || true)
+            offending=$(printf '%s\n' "$changes" \
                         | grep -vE '^[+-][[:space:]]*#' \
                         | grep -vE '^[+-][[:space:]]*-?[[:space:]]*uses:[[:space:]]*[A-Za-z0-9]' \
+                        | grep -vE '^$' \
                         || true)
             if [ -n "$offending" ]; then
               echo "workflow change is not a pure pin move - for a human:"
               printf '%s\n' "$offending" | head -20 | sed 's/^/  /'
+              exit 0
+            fi
+            actions() {
+              printf '%s\n' "$changes" \
+                | grep -E "^[$1][[:space:]]*-?[[:space:]]*uses:" \
+                | sed -E 's/^.[[:space:]]*-?[[:space:]]*uses:[[:space:]]*([^@[:space:]]+).*/\1/' \
+                | sort -u || true
+            }
+            if [ "$(actions -)" != "$(actions +)" ]; then
+              echo "workflow pin move changes which actions run - for a human"
               exit 0
             fi
           fi

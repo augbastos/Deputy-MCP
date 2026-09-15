@@ -7,6 +7,8 @@ secret or personal datum disappears, and the part that makes the error actionabl
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from deputy_mcp.errors import DeputyAPIError
@@ -120,3 +122,21 @@ def test_api_error_never_carries_a_raw_secret() -> None:
     assert _ACCESS not in rendered
     assert "jo.murphy@example.com" not in rendered
     assert "boom" in rendered
+
+
+def test_hostile_megabyte_body_is_redacted_in_bounded_time() -> None:
+    # Patterns that make the email and opaque-token regexes backtrack badly when they
+    # scan a long body; only the head of a body is ever examined.
+    for body in ("@" + "ab." * 400_000 + "1", "a" * 1_000_000, "x@" * 500_000):
+        started = time.perf_counter()
+        out = snippet(body)
+        assert time.perf_counter() - started < 1.0
+        assert out is not None and out.endswith("...")
+
+
+def test_known_secret_straddling_the_scan_limit_is_still_masked() -> None:
+    secret = "k" * 40
+    body = "x " * 598 + secret + " tail"
+    out = snippet(body, secrets=(secret,), limit=2000)
+    assert out is not None
+    assert "kkkkkkkk" not in out

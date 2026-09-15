@@ -118,17 +118,14 @@ def _filter_by_date(items: list[_ShiftT], start: date, end: date) -> list[_Shift
 
 
 def _as_own(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Label self-service records as the caller's own, like the iCal source does.
+    """Label the caller's own records "You", as the iCal source does.
 
-    ``/my/*`` records name the employee only by id, so without a join a renderer would
-    show "Employee #101" for the caller's own shift. Labelling them "You" makes the
-    output identical whichever source (API or iCal feed) the roster came from, and is
-    the clearest wording for an agent answering "when do I work?".
+    Self-service ``/my/*`` records name the employee only by id, and the admin QUERY
+    fallback for past windows joins the caller's real name. Labelling every one of the
+    caller's own records "You" keeps the output identical whichever source and date range
+    answered, and is the clearest wording for an agent answering "when do I work?".
     """
-    return [
-        rec if EMPLOYEE_JOIN in rec else {**rec, EMPLOYEE_JOIN: {"DisplayName": "You"}}
-        for rec in records
-    ]
+    return [{**rec, EMPLOYEE_JOIN: {"DisplayName": "You"}} for rec in records]
 
 
 def _employee_label(emp: Employee) -> str:
@@ -223,7 +220,7 @@ class ReadsMixin:
                 records = await query_all(self._http, "Roster", builder)
             except DeputyPermissionError:
                 return _filter_by_date(await self._my_roster(), start, end)
-            return _as_models(records, Roster)
+            return _as_models(_as_own(records), Roster)
         return _filter_by_date(await self._my_roster(), start, end)
 
     async def get_team_roster(
@@ -517,7 +514,7 @@ class ReadsMixin:
             records = await query_all(self._http, "Timesheet", builder)
         except DeputyPermissionError:
             return filtered
-        return _as_models(records, Timesheet)
+        return _as_models(_as_own(records), Timesheet)
 
     async def get_my_colleagues(self) -> list[Colleague]:
         """Return the people the caller works with (``GET /api/v1/my/colleague``).

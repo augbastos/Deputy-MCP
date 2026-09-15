@@ -13,7 +13,8 @@ The token is only ever placed in the request header — it is never logged, put
 in an exception, or included in a cache key.
 
 In OAuth mode the transport is instead bound to a stored ``access_token`` and the
-install ``base_url`` recovered from the token store. When that access token is (or
+install ``base_url`` recovered from the token store, read off the event loop on the first
+request and checked against the host allowlist. When that access token is (or
 is about to be) expired, the transport transparently mints a fresh one from the
 refresh token, persists it, updates the ``Authorization`` header and retries the
 request once. Static-token mode never enters that path, so its behaviour is
@@ -80,32 +81,27 @@ class DeputyHTTP:
     ) -> None:
         """Build a transport for one install.
 
-        In static-token mode (``oauth_tokens is None``) the base URL and bearer token
-        come straight from ``config`` — byte-for-behaviour identical to before OAuth
-        mode existed. In OAuth mode the base URL and bearer come from the stored
-        ``oauth_tokens`` instead, and the transport can refresh + persist them via
-        ``token_store`` on expiry.
+        In static-token mode (neither ``oauth_tokens`` nor ``token_store``) the base URL
+        and bearer token come straight from ``config``. In OAuth mode they come from
+        ``oauth_tokens`` or, when only ``token_store`` is given, from the store on the
+        first request; the transport refreshes and persists them on expiry. Either way
+        the install host is checked against the allowlist before it is used.
         """
         self._config = config
-        self._oauth_tokens = oauth_tokens
+        self._oauth_tokens: OAuthTokens | None = None
         self._token_store = token_store
-        # Serialize refresh so concurrent 401s mint (and persist) only one new token.
+        # Serialize token loading and refresh so concurrent requests read the store once
+        # and concurrent 401s mint (and persist) only one new token.
         self._refresh_lock = asyncio.Lock()
-        if oauth_tokens is not None:
-            base_url = f"{oauth_tokens.base_url}/api/v1"
-            bearer = oauth_tokens.access_token
-        else:
-            base_url = config.api_url
-            bearer = config.token()
         self._client = httpx.AsyncClient(
-            base_url=base_url,
-            headers={
-                "Authorization": f"Bearer {bearer}",
-                "Accept": "application/json",
-                "User-Agent": "deputy-mcp",
-            },
+            headers={"Accept": "application/json", "User-Agent": "deputy-mcp"},
             timeout=config.timeout,
         )
+        if oauth_tokens is not None:
+            self._apply_tokens(oauth_tokens)
+        elif token_store is None:
+            self._client.base_url = httpx.URL(config.api_url)
+            self._client.headers["Authorization"] = f"Bearer {config.token()}"
         self._cache: dict[str, tuple[float, Any]] = {}
 
     @property
@@ -150,8 +146,11 @@ class DeputyHTTP:
             if hit is not _MISS:
                 return hit
 
-        # OAuth only: pre-emptively refresh a token that is expired (or within the
-        # skew window) so we do not spend a round-trip earning a predictable 401.
+        # OAuth only: load the stored tokens on first use, then pre-emptively refresh a
+        # token that is expired (or within the skew window) so we do not spend a
+        # round-trip earning a predictable 401.
+        if self._token_store is not None and self._oauth_tokens is None:
+            await self._load_stored_tokens()
         tokens = self._oauth_tokens
         if tokens is not None and tokens.is_expired():
             await self._refresh_tokens(tokens.access_token)
@@ -221,6 +220,34 @@ class DeputyHTTP:
 
             raise _map_error(response)
 
+    async def _load_stored_tokens(self) -> None:
+        """Adopt the token store's tokens, read off the event loop (OAuth mode only).
+
+        A keychain read is a blocking OS call, so it runs in a worker thread. The store is
+        consulted again on every request until a token exists, which is what lets a
+        ``deputy-mcp login`` performed while the server runs take effect immediately.
+        """
+        store = self._token_store
+        if store is None:
+            return
+        async with self._refresh_lock:
+            if self._oauth_tokens is not None:
+                return  # a concurrent request loaded them first
+            stored = await asyncio.to_thread(store.load)
+            if stored is None:
+                raise DeputyAuthError(
+                    "Not signed in to Deputy: no OAuth token is stored. Run "
+                    "'deputy-mcp login' first.",
+                    hint=(
+                        "Register an app at https://once.deputy.com/my/oauth_clients "
+                        "(redirect http://localhost:8823/callback), set "
+                        "DEPUTY_OAUTH_CLIENT_ID and DEPUTY_OAUTH_CLIENT_SECRET, then run "
+                        "'deputy-mcp login'."
+                    ),
+                    status_code=None,
+                )
+            self._apply_tokens(stored)
+
     async def _refresh_tokens(self, stale_access_token: str) -> None:
         """Mint, persist and apply a fresh OAuth access token (OAuth mode only).
 
@@ -247,6 +274,7 @@ class DeputyHTTP:
                 if (
                     stored is not None
                     and stored.access_token != current.access_token
+                    and stored.base_url == current.base_url
                     and not stored.is_expired()
                 ):
                     self._apply_tokens(stored)
@@ -288,8 +316,17 @@ class DeputyHTTP:
                 await asyncio.to_thread(self._token_store.save, new_tokens)
 
     def _apply_tokens(self, tokens: OAuthTokens) -> None:
-        """Switch the transport to ``tokens`` for every subsequent request."""
+        """Switch the transport to ``tokens`` for every subsequent request.
+
+        The single place an OAuth install host becomes the request target, so it is also
+        where that host is checked against the ``*.deputy.com`` allowlist: tokens read
+        from a tampered keychain entry or token file cannot send the bearer elsewhere.
+        """
+        from deputy_mcp.oauth import require_deputy_host
+
+        require_deputy_host(tokens.base_url, allow_custom_host=self._config.allow_custom_host)
         self._oauth_tokens = tokens
+        self._client.base_url = httpx.URL(f"{tokens.base_url}/api/v1")
         self._client.headers["Authorization"] = f"Bearer {tokens.access_token}"
 
     def invalidate(self) -> None:
