@@ -1,0 +1,6 @@
+# Fictional credentials that exist to test redaction (tests/unit/test_sanitize.py and the
+# agent evals). Each entry pins one commit, file, rule and line, so a real secret added
+# anywhere else, including elsewhere in these files, is still reported.
+748c4c4c0a57a495c4bb84493b112a5e8e42e262:tests/unit/test_sanitize.py:generic-api-key:15
+748c4c4c0a57a495c4bb84493b112a5e8e42e262:tests/unit/test_sanitize.py:jwt:72
+c0cdb6a42f60e68376c32af974ee2aefbc11ee1c:tests/server/test_agent_evals.py:generic-api-key:317
