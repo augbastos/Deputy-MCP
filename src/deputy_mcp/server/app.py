@@ -63,7 +63,8 @@ def _instructions(*, allow_writes: bool, mode: Literal["api", "ical"]) -> str:
     )
     writes = (
         " Write tools are enabled (claim open shift, request swap, set unavailability, "
-        "clock in/out). Only call one when the user explicitly asks for that change."
+        "clock in/out). Only call one when the user explicitly asks for that change; "
+        "claiming an open shift also asks the user to confirm in the client."
         if allow_writes
         else " Write actions are disabled (read-only); the operator can enable them with "
         "DEPUTY_ALLOW_WRITES=true."

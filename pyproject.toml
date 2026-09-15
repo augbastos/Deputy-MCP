@@ -93,4 +93,5 @@ testpaths = ["tests"]
 addopts = "-m 'not live'"
 markers = [
     "live: tests that hit a real Deputy instance (need DEPUTY_* credentials; run with -m live)",
+    "evals: deterministic agent-interface evals over the MCP protocol (run with -m evals)",
 ]

@@ -90,6 +90,13 @@ async def resolve_client_timezone(client: DeputyClient) -> tuple[tzinfo, str]:
     return resolve_timezone(company)
 
 
+def _read_only_annotations(title: str) -> ToolAnnotations:
+    """MCP hints for a read tool: a human title, read-only, talks to an external system."""
+    from mcp.types import ToolAnnotations
+
+    return ToolAnnotations(title=title, read_only_hint=True, open_world_hint=True)
+
+
 async def _area_map(client: DeputyClient) -> dict[int, str]:
     """Best-effort ``{area_id: name}`` map; empty when areas cannot be listed."""
     try:
@@ -109,11 +116,9 @@ def register(
     ``deputy_whoami``); the API-only tools are left unregistered so the advertised tool
     list is honest about what actually works.
     """
-    from mcp.types import ToolAnnotations
+    read_only = _read_only_annotations
 
-    read_only = ToolAnnotations(read_only_hint=True, open_world_hint=True)
-
-    @mcp.tool(name="deputy_whoami", annotations=read_only)
+    @mcp.tool(name="deputy_whoami", annotations=read_only("Check Deputy connection"))
     async def deputy_whoami(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
@@ -183,7 +188,7 @@ def register(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_my_calendar_url", annotations=read_only)
+    @mcp.tool(name="deputy_get_my_calendar_url", annotations=read_only("My calendar feed link"))
     async def deputy_get_my_calendar_url(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
@@ -213,7 +218,7 @@ def register(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_my_roster", annotations=read_only)
+    @mcp.tool(name="deputy_get_my_roster", annotations=read_only("My roster"))
     async def deputy_get_my_roster(
         start_date: Annotated[str | None, Field(description="Start date (ISO).")] = None,
         end_date: Annotated[str | None, Field(description="End date (ISO).")] = None,
@@ -251,7 +256,7 @@ def register(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_next_shift", annotations=read_only)
+    @mcp.tool(name="deputy_next_shift", annotations=read_only("Next shift"))
     async def deputy_next_shift(
         employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
@@ -291,7 +296,9 @@ def register(
 
 
 def _register_api_tools(
-    mcp: FastMCP[Any], get_client: ClientProvider, read_only: ToolAnnotations
+    mcp: FastMCP[Any],
+    get_client: ClientProvider,
+    read_only: Callable[[str], ToolAnnotations],
 ) -> None:
     """Register the read tools that require a Deputy API token (api mode only).
 
@@ -300,7 +307,7 @@ def _register_api_tools(
     and timesheets. They are not registered in iCal mode, where no API token exists.
     """
 
-    @mcp.tool(name="deputy_get_team_roster", annotations=read_only)
+    @mcp.tool(name="deputy_get_team_roster", annotations=read_only("Team roster (manager)"))
     async def deputy_get_team_roster(
         date: Annotated[str | None, Field(description="Single day (ISO); overrides range.")] = None,
         start_date: Annotated[str | None, Field(description="Range start (ISO).")] = None,
@@ -309,6 +316,8 @@ def _register_api_tools(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """List every scheduled shift in a date range, optionally scoped to one area.
+
+        Needs a manager or administrator access level in Deputy.
 
         Pass a single 'date' for one day, or 'start_date'/'end_date' for a range
         (defaults to today through +7 days, computed in UTC). 'area_id' filters to one
@@ -339,12 +348,14 @@ def _register_api_tools(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_who_is_working", annotations=read_only)
+    @mcp.tool(name="deputy_who_is_working", annotations=read_only("Who is working (manager)"))
     async def deputy_who_is_working(
         at: Annotated[str | None, Field(description="Instant to evaluate (ISO datetime).")] = None,
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Show who is working at an instant: physically clocked in vs scheduled on.
+
+        Needs a manager or administrator access level in Deputy.
 
         Reconciles two signals — who is clocked in (actual timesheets) and who is
         rostered on (schedule window). 'at' is an optional ISO datetime; it defaults to
@@ -371,20 +382,23 @@ def _register_api_tools(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_employee_info", annotations=read_only)
+    @mcp.tool(name="deputy_get_employee_info", annotations=read_only("Employee lookup (manager)"))
     async def deputy_get_employee_info(
         name_or_id: Annotated[str, Field(description="Employee name (substring) or numeric id.")],
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Look up one or more employees by name (substring) or numeric id.
 
+        Needs a manager or administrator access level in Deputy.
+
         Returns each match's documented profile fields (status, location, role id). A
         name may match several people; every match is listed with its id so you can
         follow up by id.
 
         When NOT to use: to find someone's shifts (use deputy_search_shifts or
-        deputy_next_shift) — this returns profiles, not schedules. Use deputy_get_areas
-        to translate location/area ids into names.
+        deputy_next_shift), or to list the people you work with at any access level (use
+        deputy_get_my_colleagues) — this returns profiles, not schedules. Use
+        deputy_get_areas to translate location/area ids into names.
 
         Returns markdown (an employee list with ids) or, with response_format="json", a
         list of profiles with the same facts: Id, DisplayName, FirstName, LastName, Active,
@@ -407,7 +421,7 @@ def _register_api_tools(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_search_shifts", annotations=read_only)
+    @mcp.tool(name="deputy_search_shifts", annotations=read_only("Search shifts (manager)"))
     async def deputy_search_shifts(
         employee: Annotated[str | None, Field(description="Employee name or id.")] = None,
         area_id: Annotated[int | None, Field(description="OperationalUnit id filter.")] = None,
@@ -419,6 +433,8 @@ def _register_api_tools(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
         """Search shifts by employee (name or id), area, date range, and open status.
+
+        Needs a manager or administrator access level in Deputy.
 
         'open_only' finds shifts nobody is assigned to yet. 'limit'/'offset' page the
         results (max 500 per page). A name given as 'employee' must resolve to exactly
@@ -476,7 +492,7 @@ def _register_api_tools(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_areas", annotations=read_only)
+    @mcp.tool(name="deputy_get_areas", annotations=read_only("Areas"))
     async def deputy_get_areas(
         response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
     ) -> str:
@@ -496,7 +512,7 @@ def _register_api_tools(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_my_timesheets", annotations=read_only)
+    @mcp.tool(name="deputy_get_my_timesheets", annotations=read_only("My timesheets"))
     async def deputy_get_my_timesheets(
         start_date: Annotated[str | None, Field(description="Start date (ISO).")] = None,
         end_date: Annotated[str | None, Field(description="End date (ISO).")] = None,
@@ -505,7 +521,7 @@ def _register_api_tools(
         """List the signed-in user's own timesheets (actual worked time) in a range.
 
         Defaults to the last 7 days through today, computed in UTC. Shows total hours
-        worked and flags any timesheet still in progress.
+        worked and flags any timesheet still in progress. Works at any Deputy access level.
 
         When NOT to use: for scheduled (not yet worked) time (use deputy_get_my_roster)
         — timesheets record actual attendance, not the plan.
@@ -529,7 +545,7 @@ def _register_api_tools(
         except DeputyError as exc:
             return format_error(exc)
 
-    @mcp.tool(name="deputy_get_my_colleagues", annotations=read_only)
+    @mcp.tool(name="deputy_get_my_colleagues", annotations=read_only("My colleagues"))
     async def deputy_get_my_colleagues(
         same_workplace_only: Annotated[
             bool, Field(description="Only colleagues at your own workplace/location.")

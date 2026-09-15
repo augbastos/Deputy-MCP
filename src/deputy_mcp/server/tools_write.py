@@ -172,7 +172,7 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         replacement shift) -- some installs may reject that; see the tool's error.
 
         When NOT to use: to approve/decline an existing swap (manager action, not
-        exposed), or to claim an open shift (use ``deputy_claim_open_shift``).
+        exposed), or to claim an open shift (use deputy_claim_open_shift).
 
         Returns markdown (a confirmation of the submitted request) or, with
         response_format="json", the object ``{"swap_id", "source_shift_id", "status",
@@ -233,8 +233,9 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         given). Times are ISO 8601; a value without a timezone offset is treated as
         UTC. The end must be strictly after the start.
 
-        When NOT to use: to request a single shift off (that is a leave request, not
-        modelled here) -- this blocks availability for the whole window.
+        When NOT to use: to give away one shift you are already rostered on (use
+        deputy_request_shift_swap), or to request leave (not modelled here) -- this
+        blocks your availability for the whole window.
 
         Returns markdown (a confirmation of the recorded window) or, with
         response_format="json", the object ``{"unavailability_id", "recurring", "start",
@@ -337,8 +338,8 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         timesheet id is needed. A clear error is returned if the user is not clocked in.
         Optionally records an unpaid meal break.
 
-        When NOT to use: to end someone else's timesheet or to edit a past one -- this
-        only closes your currently running timesheet.
+        When NOT to use: to start working (use deputy_clock_in), or to end someone
+        else's timesheet or edit a past one -- this only closes your running timesheet.
 
         Returns markdown (a confirmation with the ended timesheet id, end time and total
         hours) or, with response_format="json", the object ``{"timesheet_id",
