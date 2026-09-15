@@ -1,5 +1,5 @@
 # Deputy MCP — container image running the MCP server over stdio.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Copy the standalone uv binary from its official image (pinned major version).
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /usr/local/bin/
