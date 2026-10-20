@@ -11,7 +11,7 @@ Ask Claude *"when do I work next?"* and get the answer from your
 
 Deputy MCP is a local [MCP](https://modelcontextprotocol.io) server that lets AI agents
 read your shifts, timesheets and team schedule, and, only if you turn it on, act on them.
-It runs on your machine, talks only to your Deputy install, and works with a regular
+It runs on your machine, connects to Deputy, and works with a regular
 employee account.
 
 ## What you can ask
@@ -24,7 +24,37 @@ employee account.
 
 ## Install
 
-Needs [uv](https://docs.astral.sh/uv/). For Claude Code:
+Needs [uv](https://docs.astral.sh/uv/) and Python 3.11 or newer. Choose your access
+mode first:
+
+| Mode | Who it's for | Start here |
+|---|---|---|
+| **OAuth** | Any employee | [Employee sign-in](#employee-oauth) |
+| **API token** | Deputy admins | [Admin setup](#admin-api-token) |
+| **Calendar feed** | No API access | Set `DEPUTY_CALENDAR_URL` using the [client setup](docs/DESIGN.md#other-mcp-clients); your own roster only, read-only |
+
+### Employee OAuth
+
+Create a personal app at <https://once.deputy.com/my/oauth_clients> with the redirect
+URI `http://localhost:8823/callback`. In Bash, replace the placeholders, sign in,
+then register the server with Claude Code:
+
+```bash
+export DEPUTY_OAUTH_CLIENT_ID='your-client-id'
+export DEPUTY_OAUTH_CLIENT_SECRET='your-client-secret'
+uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp login
+claude mcp add deputy \
+  -e DEPUTY_OAUTH_CLIENT_ID="$DEPUTY_OAUTH_CLIENT_ID" \
+  -e DEPUTY_OAUTH_CLIENT_SECRET="$DEPUTY_OAUTH_CLIENT_SECRET" \
+  -- uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp
+```
+
+Login opens your browser and stores OAuth tokens in your OS keychain by default.
+Run login and Claude Code as the same OS user.
+
+### Admin API token
+
+With your Deputy API token and install URL, register directly; no OAuth login is needed:
 
 ```bash
 claude mcp add deputy \
@@ -33,20 +63,7 @@ claude mcp add deputy \
   -- uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp
 ```
 
-Claude Desktop, other MCP clients and Docker: see [docs/DESIGN.md](docs/DESIGN.md#other-ways-to-install).
-
-## Sign in
-
-Pick one:
-
-| Mode | Who it's for | What to set |
-|---|---|---|
-| **API token** | Deputy admins | `DEPUTY_API_TOKEN` and `DEPUTY_BASE_URL` |
-| **OAuth** | Any employee | `DEPUTY_OAUTH_CLIENT_ID` and `DEPUTY_OAUTH_CLIENT_SECRET`, then run `deputy-mcp login` |
-| **Calendar feed** | No API access | `DEPUTY_CALENDAR_URL` (your own roster only, read-only) |
-
-For OAuth, create a personal app at <https://once.deputy.com/my/oauth_clients> with the
-redirect URI `http://localhost:8823/callback`. Tokens are stored in your OS keychain.
+Claude Desktop, other MCP clients and Docker: see [other ways to install](docs/DESIGN.md#other-ways-to-install).
 All settings are listed in [`.env.example`](.env.example).
 
 ## Tools
@@ -66,8 +83,9 @@ All settings are listed in [`.env.example`](.env.example).
   don't exist for the agent.
 - **You confirm** before a shift is claimed, since that skips Deputy's approval step.
 - **No guessing**: if a name matches several people, you get the list, not the first one.
-- **Your credentials stay local**: tokens go only to `https://*.deputy.com` and live in
-  your OS keychain; errors are scrubbed of secrets before an agent sees them.
+- **Credential protection**: by default, tokens go only to `https://*.deputy.com`
+  and OAuth tokens live in your OS keychain; errors are scrubbed of secrets before
+  an agent sees them.
 
 ## Status
 
