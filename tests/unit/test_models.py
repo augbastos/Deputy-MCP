@@ -18,7 +18,6 @@ from deputy_mcp.client.models import (
     Employee,
     OperationalUnit,
     Roster,
-    RosterSwap,
     Timesheet,
     Unavailability,
     WhoAmI,
@@ -117,14 +116,6 @@ def test_contact_parses(make_contact: Callable[..., dict[str, Any]]) -> None:
     contact = Contact.model_validate(make_contact())
     assert contact.Email1 == "alex.rivera@example.com"
     assert contact.PrimaryPhone == 1
-
-
-def test_roster_swap_parses() -> None:
-    swap = RosterSwap.model_validate(
-        {"Id": 5, "SourceRoster": 9001, "Status": 4, "RequestMessage": "cover please"}
-    )
-    assert swap.Status == 4
-    assert swap.SourceRoster == 9001
 
 
 def test_unavailability_parses() -> None:

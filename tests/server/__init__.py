@@ -44,11 +44,10 @@ READ_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: The five write tools that appear ONLY when DEPUTY_ALLOW_WRITES is enabled.
+#: The four write tools that appear ONLY when DEPUTY_ALLOW_WRITES is enabled.
 WRITE_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "deputy_claim_open_shift",
-        "deputy_request_shift_swap",
         "deputy_set_unavailability",
         "deputy_clock_in",
         "deputy_clock_out",
@@ -118,7 +117,6 @@ def wire_write_api(
     *,
     whoami: dict[str, Any],
     company: dict[str, Any],
-    swap: dict[str, Any],
     unavailability: dict[str, Any],
     timesheet_started: dict[str, Any],
     timesheet_ended: dict[str, Any],
@@ -150,7 +148,6 @@ def wire_write_api(
         )
     )
     router.post("/supervise/roster", name="claim").mock(return_value=httpx.Response(200, text=""))
-    router.post("/resource/RosterSwap").mock(return_value=_ok(swap))
     router.post("/supervise/unavail").mock(return_value=_ok(unavailability))
     router.post("/supervise/timesheet/start").mock(return_value=_ok(timesheet_started))
     router.post("/supervise/timesheet/end").mock(return_value=_ok(timesheet_ended))

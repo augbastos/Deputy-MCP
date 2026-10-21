@@ -1,7 +1,7 @@
 """In-memory FastMCP tests for the Deputy write tools (opt-in, gated).
 
 These tests prove the design's central safety invariant from the MCP surface: the
-five write tools are invisible when ``DEPUTY_ALLOW_WRITES`` is false and present when
+four write tools are invisible when ``DEPUTY_ALLOW_WRITES`` is false and present when
 it is true. When enabled, each tool is exercised against a respx-mocked Deputy API and
 its confirmation / error text is checked -- a Deputy failure must surface as an
 actionable string, never a traceback.
@@ -47,14 +47,6 @@ def _wire(
         # clock_out reads the in-progress timesheet from /me's InProgressTS.
         whoami=make_whoami(InProgressTS=8001),
         company=make_company(),
-        swap={
-            "Id": 555,
-            "SourceRoster": 9001,
-            "TargetRoster": 0,
-            "Employee": 101,
-            "Status": 4,
-            "RequestMessage": "Please cover",
-        },
         unavailability={"Id": 777, "Type": 0},
         timesheet_started=make_timesheet(Id=8001, EndTime=None, IsInProgress=True, TotalTime=None),
         timesheet_ended=make_timesheet(Id=8001, IsInProgress=False, TotalTime=8.0),
@@ -211,24 +203,6 @@ async def test_claiming_a_shift_that_is_not_open_never_prompts(
     assert "not an open shift" in tool_text(result)
     assert prompted == []
     assert deputy_api.routes["claim"].call_count == 0
-
-
-async def test_request_shift_swap(
-    writes_env: dict[str, str],
-    deputy_api: respx.MockRouter,
-    make_whoami: Any,
-    make_company: Any,
-    make_timesheet: Any,
-) -> None:
-    _wire(deputy_api, make_whoami, make_company, make_timesheet)
-    server = create_server()
-    async with Client(server) as client:
-        result = await client.call_tool(
-            "deputy_request_shift_swap", {"shift_id": 9001, "note": "Please cover"}
-        )
-    text = tool_text(result)
-    assert "555" in text
-    assert "Pending Approval" in text
 
 
 async def test_set_unavailability(

@@ -524,7 +524,7 @@ async def test_who_is_working_queries_both_signals(
             "s1": {"field": "StartTime", "type": "le", "data": now},
             "s2": {"field": "EndTime", "type": "gt", "data": now},
             "s3": {"field": "Published", "type": "eq", "data": True},
-            "s4": {"field": "Open", "type": "ne", "data": True},
+            "s4": {"field": "Employee", "type": "gt", "data": 0},
         },
         "join": ["EmployeeObject"],
         "max": 500,

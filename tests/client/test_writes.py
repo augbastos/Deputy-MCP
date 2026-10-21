@@ -4,7 +4,7 @@ invalidation and adversarial permission/edge cases of Deputy's write endpoints.
 Coverage spans (1) every write raising :class:`DeputyWritesDisabledError` before any
 HTTP call when ``DEPUTY_ALLOW_WRITES`` is false, (2) the paths that do NOT resolve the
 caller's employee id (``clock_out`` with an explicit timesheet id, input validation),
-and (3) the employee-id-resolving paths (claim/swap/unavail/clock-in), each asserting
+and (3) the employee-id-resolving paths (claim/unavail/clock-in), each asserting
 its documented payload, cache invalidation, and 403 -> :class:`DeputyPermissionError`
 mapping. The caller's own ``Employee.Id`` is resolved via ``own_employee_id()`` (the
 whoami-derived cache on :class:`DeputyClient`).
@@ -75,14 +75,6 @@ async def test_claim_open_shift_gated_when_writes_disabled(
         await disabled_client.claim_open_shift(9001)
     assert exc.value.hint is not None  # tells the user how to enable writes
     assert not deputy_api.calls  # gate short-circuits before touching the network
-
-
-async def test_request_shift_swap_gated_when_writes_disabled(
-    disabled_client: DeputyClient, deputy_api: respx.MockRouter
-) -> None:
-    with pytest.raises(DeputyWritesDisabledError):
-        await disabled_client.request_shift_swap(9001, note="please")
-    assert not deputy_api.calls
 
 
 async def test_set_unavailability_gated_when_writes_disabled(
@@ -228,7 +220,9 @@ def test_parse_recurrence_malformed_rejected(repeat: str) -> None:
 # Each mocks WhoAmI (own_employee_id -> 101) and asserts the documented body.
 
 
-async def test_claim_open_shift_payload_preserves_time_and_area(
+@pytest.mark.parametrize("published", [True, False, None])
+async def test_claim_open_shift_payload_preserves_time_area_and_publication(
+    published: bool | None,
     write_client: DeputyClient,
     deputy_api: respx.MockRouter,
     make_whoami: PayloadFactory,
@@ -243,6 +237,7 @@ async def test_claim_open_shift_payload_preserves_time_and_area(
             json=make_roster(
                 Id=9001,
                 Open=True,
+                Published=published,
                 Employee=0,
                 StartTime=1609459200,
                 EndTime=1609488000,
@@ -252,7 +247,7 @@ async def test_claim_open_shift_payload_preserves_time_and_area(
     )
     route = deputy_api.post("/supervise/roster").mock(return_value=httpx.Response(200))
     await write_client.claim_open_shift(9001)
-    assert _posted_body(route) == {
+    expected = {
         "intRosterId": 9001,
         "intRosterEmployee": 101,
         "blnOpen": 0,
@@ -260,6 +255,9 @@ async def test_claim_open_shift_payload_preserves_time_and_area(
         "intEndTimestamp": 1609488000,
         "intOpunitId": 11,
     }
+    if published:
+        expected["blnPublish"] = 1
+    assert _posted_body(route) == expected
 
 
 async def test_claim_open_shift_refuses_non_open_shift(
@@ -294,52 +292,6 @@ async def test_claim_open_shift_403_maps_to_permission_error(
     deputy_api.post("/supervise/roster").mock(return_value=httpx.Response(403))
     with pytest.raises(DeputyPermissionError):
         await write_client.claim_open_shift(9001)
-
-
-async def test_request_shift_swap_payload_with_note(
-    write_client: DeputyClient,
-    deputy_api: respx.MockRouter,
-    make_whoami: PayloadFactory,
-) -> None:
-    _mock_whoami(deputy_api, make_whoami)
-    route = deputy_api.post("/resource/RosterSwap").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "Id": 55,
-                "SourceRoster": 9001,
-                "TargetRoster": 0,
-                "Employee": 101,
-                "Status": 4,
-                "RequestMessage": "Cover Saturday",
-            },
-        )
-    )
-    swap = await write_client.request_shift_swap(9001, note="Cover Saturday")
-    assert swap.Id == 55
-    assert _posted_body(route) == {
-        "SourceRoster": 9001,
-        "TargetRoster": 0,
-        "Employee": 101,
-        "Status": 4,
-        "RequestMessage": "Cover Saturday",
-    }
-
-
-async def test_request_shift_swap_payload_without_note(
-    write_client: DeputyClient,
-    deputy_api: respx.MockRouter,
-    make_whoami: PayloadFactory,
-) -> None:
-    _mock_whoami(deputy_api, make_whoami)
-    route = deputy_api.post("/resource/RosterSwap").mock(
-        return_value=httpx.Response(
-            200,
-            json={"Id": 56, "SourceRoster": 9001, "TargetRoster": 0, "Status": 4},
-        )
-    )
-    await write_client.request_shift_swap(9001)
-    assert "RequestMessage" not in _posted_body(route)
 
 
 async def test_set_unavailability_payload(

@@ -62,7 +62,7 @@ def _instructions(*, allow_writes: bool, mode: Literal["api", "ical"]) -> str:
         "Dates are ISO YYYY-MM-DD; times are shown in the install timezone."
     )
     writes = (
-        " Write tools are enabled (claim open shift, request swap, set unavailability, "
+        " Write tools are enabled (claim open shift, set unavailability, "
         "clock in/out). Only call one when the user explicitly asks for that change; "
         "claiming an open shift also asks the user to confirm in the client."
         if allow_writes

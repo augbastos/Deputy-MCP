@@ -4,6 +4,23 @@ All notable changes to Deputy MCP. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/) (pre-1.0: a minor version may break).
 
+## [0.4.0] — 2026-10-21
+
+Every manager and write tool was exercised against a live Deputy install; this release
+fixes what that run found.
+
+### Removed — breaking
+
+- `deputy_request_shift_swap`. Deputy's public API exposes `RosterSwap` as read-only (no
+  create endpoint), so the tool could never succeed; shift swaps stay in the Deputy app.
+
+### Fixed
+
+- `deputy_who_is_working` listed nobody as rostered on real installs: Deputy returns
+  `Open` as null on ordinary shifts, and the `Open != true` filter dropped them.
+- `deputy_claim_open_shift` assigned the shift but left it unpublished, so it vanished
+  from the employee's roster; the shift's published state is now kept.
+
 ## [0.3.1] — 2026-10-21
 
 ### Added
