@@ -4,6 +4,24 @@ All notable changes to Deputy MCP. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/) (pre-1.0: a minor version may break).
 
+## [0.4.1] — 2026-10-21
+
+Found by installing the desktop bundle in Claude Desktop.
+
+### Fixed
+
+- The bundle failed to start unless every optional setting was filled: Claude Desktop
+  passes a blank setting as the literal `${user_config.…}` text, which was read as a value.
+- OAuth tokens are now kept per OAuth client in the keychain. Before, every client shared
+  one entry, so a second install (for example a test account in the desktop bundle) read
+  and could overwrite the first one's token. **Existing OAuth users sign in once again.**
+- The sign-in result page no longer assumes a terminal.
+
+### Changed
+
+- README: create the OAuth app at once.deputy.com (an install-only app fails with
+  `invalid_client`), and install the bundle by dragging it onto Settings → Extensions.
+
 ## [0.4.0] — 2026-10-21
 
 Every manager and write tool was exercised against a live Deputy install; this release

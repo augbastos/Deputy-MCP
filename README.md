@@ -36,8 +36,10 @@ mode first:
 ### Employee OAuth
 
 Create a personal app at <https://once.deputy.com/my/oauth_clients> with the redirect
-URI `http://localhost:8823/callback`. In Bash, replace the placeholders, sign in,
-then register the server with Claude Code:
+URI `http://localhost:8823/callback`. Create it there, not under your install's
+Settings → Developer: an app made inside an install fails sign-in with
+`invalid_client`. In Bash, replace the placeholders, sign in, then register the
+server with Claude Code:
 
 ```bash
 export DEPUTY_OAUTH_CLIENT_ID='your-client-id'
@@ -75,7 +77,9 @@ codex mcp add deputy --env DEPUTY_CALENDAR_URL=... -- uvx deputy-mcp
 The first `uvx` run downloads dependencies; if Codex reports the tools as unavailable,
 set `startup_timeout_sec = 60` under `[mcp_servers.deputy]` in `~/.codex/config.toml`.
 
-Claude Desktop users: look for the `.mcpb` bundle on the [Releases page](https://github.com/augbastos/deputy-mcp/releases).
+Claude Desktop users: download the `.mcpb` bundle from the [Releases page](https://github.com/augbastos/deputy-mcp/releases)
+and drag it onto Settings → Extensions (double-clicking may not open it on Windows). Fill
+in one access mode under Configure, then ask Claude to sign you in.
 Other MCP clients and Docker: see [other ways to install](docs/DESIGN.md#other-ways-to-install).
 All settings are listed in [`.env.example`](.env.example).
 
