@@ -18,7 +18,9 @@
     "SwapStatus": 0,
     "Creator": 1,
     "Created": "2020-12-01T10:00:00",
-    "Modified": "2020-12-20T10:00:00"
+    "Modified": "2020-12-20T10:00:00",
+    "StartTimeLocalized": "2021-01-01T00:00:00+00:00",
+    "EndTimeLocalized": "2021-01-01T08:00:00+00:00"
   },
   {
     "Id": 9002,
@@ -39,7 +41,9 @@
     "SwapStatus": 0,
     "Creator": 1,
     "Created": "2020-12-01T10:00:00",
-    "Modified": "2020-12-20T10:00:00"
+    "Modified": "2020-12-20T10:00:00",
+    "StartTimeLocalized": "2021-01-01T08:00:00+00:00",
+    "EndTimeLocalized": "2021-01-01T16:00:00+00:00"
   },
   {
     "Id": 9003,
@@ -60,6 +64,8 @@
     "SwapStatus": 0,
     "Creator": 1,
     "Created": "2020-12-01T10:00:00",
-    "Modified": "2020-12-20T10:00:00"
+    "Modified": "2020-12-20T10:00:00",
+    "StartTimeLocalized": "2021-01-01T16:00:00+00:00",
+    "EndTimeLocalized": "2021-01-02T00:00:00+00:00"
   }
 ]

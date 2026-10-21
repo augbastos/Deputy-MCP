@@ -36,7 +36,7 @@ from pydantic import Field
 from deputy_mcp.client.errors import DeputyError
 from deputy_mcp.sanitize import redact
 from deputy_mcp.server._confirm import confirm
-from deputy_mcp.server.formatting import ResponseFormat, fmt_ts, render
+from deputy_mcp.server.formatting import ResponseFormat, fmt_record_time, record_time_label, render
 from deputy_mcp.server.tools_read import _FORMAT_FIELD, resolve_client_timezone
 
 if TYPE_CHECKING:
@@ -118,7 +118,14 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             decision = await confirm(
                 ctx,
                 _claim_prompt(
-                    shift_id, fmt_ts(shift.StartTime, tz), fmt_ts(shift.EndTime, tz), tz_label
+                    shift_id,
+                    fmt_record_time(
+                        shift.StartTime, shift.StartTimeLocalized, tz, fallback_label=tz_label
+                    ),
+                    fmt_record_time(
+                        shift.EndTime, shift.EndTimeLocalized, tz, fallback_label=tz_label
+                    ),
+                    record_time_label([shift], tz_label),
                 ),
                 action_id=f"claim-open-shift:{shift_id}",
             )
@@ -201,9 +208,13 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         data = {
             "unavailability_id": record.get("Id"),
             "recurring": bool(record_type) if record_type is not None else bool(repeat),
-            "start": fmt_ts(_to_unix(start_dt), tz),
-            "end": fmt_ts(_to_unix(end_dt), tz),
-            "timezone": tz_label,
+            "start": fmt_record_time(
+                _to_unix(start_dt), unavail.StartTimeLocalized, tz, fallback_label=tz_label
+            ),
+            "end": fmt_record_time(
+                _to_unix(end_dt), unavail.EndTimeLocalized, tz, fallback_label=tz_label
+            ),
+            "timezone": record_time_label([unavail], tz_label),
             "reason": reason,
         }
         return render(data, lambda: _md_unavail(data), response_format)
@@ -256,8 +267,10 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             "timesheet_id": record.get("Id"),
             "area_id": record.get("OperationalUnit"),
             "in_progress": record.get("IsInProgress"),
-            "start_time": fmt_ts(start_unix, tz) if isinstance(start_unix, int) else None,
-            "timezone": tz_label,
+            "start_time": fmt_record_time(start_unix, timesheet.StartTimeLocalized, tz)
+            if isinstance(start_unix, int)
+            else None,
+            "timezone": record_time_label([timesheet], tz_label, ("StartTime",)),
         }
         return render(data, lambda: _md_clock_in(data), response_format)
 
@@ -300,8 +313,10 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         data = {
             "timesheet_id": record.get("Id"),
             "in_progress": record.get("IsInProgress"),
-            "end_time": fmt_ts(end_unix, tz) if isinstance(end_unix, int) else None,
-            "timezone": tz_label,
+            "end_time": fmt_record_time(end_unix, timesheet.EndTimeLocalized, tz)
+            if isinstance(end_unix, int)
+            else None,
+            "timezone": record_time_label([timesheet], tz_label, ("EndTime",)),
             "total_hours": record.get("TotalTime"),
             "mealbreak_minutes": mealbreak_minutes,
         }

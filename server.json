@@ -3,7 +3,7 @@
   "name": "io.github.augbastos/deputy-mcp",
   "title": "Deputy MCP",
   "description": "Deputy workforce data for AI agents: rosters, timesheets and shifts; read-only by default",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "websiteUrl": "https://github.com/augbastos/deputy-mcp",
   "repository": {
     "url": "https://github.com/augbastos/deputy-mcp",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "deputy-mcp",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "transport": {
         "type": "stdio"
       },

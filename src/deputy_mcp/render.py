@@ -12,20 +12,16 @@ employee is rendered identically everywhere. Every tool exposes a
 ``response_format`` argument; :func:`render` switches between a human markdown
 view and a machine JSON view of the same data.
 
-Times are rendered in the install's local timezone. Deputy stores
-``StartTime``/``EndTime`` as unix UTC seconds; :func:`resolve_timezone` derives a
-:class:`~datetime.tzinfo` from the company/location record (falling back to UTC,
-and degrading gracefully when the local tz database is unavailable — e.g. a
-Windows host without ``tzdata``), and :func:`fmt_ts` formats a timestamp in it.
-A caller that has no company record (e.g. the CLI, which does not make an extra
-API call to fetch one) passes ``None`` and renders in UTC through this same code
-path — parameterised by ``tz``, not a second renderer.
+Times prefer Deputy's per-record offset-bearing ``StartTimeLocalized`` and
+``EndTimeLocalized`` strings. Otherwise :func:`resolve_timezone` probes the
+company/location timezone keys, falling back to UTC. Labels describe the offsets
+actually used, including DST changes and any timestamps requiring fallback.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, tzinfo
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -40,15 +36,19 @@ from deputy_mcp.client.models import (
     OperationalUnit,
     Roster,
     Timesheet,
+    Unavailability,
 )
 
 __all__ = [
     "PUBLIC_EMPLOYEE_FIELDS",
     "ResponseFormat",
     "areas_by_id",
+    "company_timezone_label",
     "employee_display",
+    "fmt_record_time",
     "fmt_ts",
     "public_employee",
+    "record_time_label",
     "render",
     "render_areas",
     "render_calendar_url",
@@ -112,6 +112,64 @@ def fmt_ts(unix: int | None, tz: tzinfo) -> str:
     if unix is None:
         return "unknown"
     return datetime.fromtimestamp(unix, tz=tz).strftime("%Y-%m-%d %H:%M")
+
+
+def _localized(value: str | None) -> datetime | None:
+    if value:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.utcoffset() is not None:
+            return parsed
+    return None
+
+
+def fmt_record_time(
+    unix: int | None, localized: str | None, tz: tzinfo, *, fallback_label: str | None = None
+) -> str:
+    """Prefer Deputy's offset-bearing local time, otherwise use the existing timezone."""
+    parsed = _localized(localized)
+    if parsed is not None:
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    result = fmt_ts(unix, tz)
+    return f"{result} [{fallback_label}]" if fallback_label and unix is not None else result
+
+
+def record_time_label(
+    records: Sequence[Roster | Timesheet | Unavailability],
+    fallback: str,
+    fields: tuple[str, ...] = ("StartTime", "EndTime"),
+) -> str:
+    """Describe only the offsets used, explicitly identifying fallback timestamps."""
+    offsets: list[str] = []
+    missing = False
+    for record in records:
+        for field in fields:
+            if isinstance(record, Timesheet) and field == "EndTime" and record.EndTime is None:
+                continue
+            parsed = _localized(getattr(record, f"{field}Localized", None))
+            if parsed is None:
+                missing = True
+            else:
+                offset = parsed.strftime("%z")
+                label = f"UTC{offset[:3]}:{offset[3:]}"
+                if label not in offsets:
+                    offsets.append(label)
+    if not offsets:
+        return fallback
+    label = f"the workplace's local time ({' / '.join(offsets)})"
+    if missing:
+        label += f" where available; fallback timestamps marked [{fallback}]"
+    return label
+
+
+def company_timezone_label(company: Company | None) -> str | None:
+    """Return the resolved label only when Deputy actually exposes a timezone key."""
+    extra = company.model_extra or {} if company is not None else {}
+    if any(isinstance(extra.get(key), str) and extra[key].strip() for key in _TZ_KEYS):
+        return resolve_timezone(company)[1]
+    return None
 
 
 def areas_by_id(units: list[OperationalUnit]) -> dict[int, str]:
@@ -248,10 +306,14 @@ def _hours(value: float | None) -> str:
 # --------------------------------------------------------------------------- #
 # Markdown renderers
 # --------------------------------------------------------------------------- #
-def _roster_line(r: Roster, tz: tzinfo, areas: Mapping[int, str] | None) -> str:
+def _roster_line(
+    r: Roster, tz: tzinfo, areas: Mapping[int, str] | None, fallback: str | None = None
+) -> str:
     who = "Open shift" if r.Open else _person(r)
     flag = " **[OPEN]**" if r.Open else ""
-    times = f"{fmt_ts(r.StartTime, tz)} - {fmt_ts(r.EndTime, tz)}"
+    start = fmt_record_time(r.StartTime, r.StartTimeLocalized, tz, fallback_label=fallback)
+    end = fmt_record_time(r.EndTime, r.EndTimeLocalized, tz, fallback_label=fallback)
+    times = f"{start} - {end}"
     return f"- {times} | {who} | {_area_label(r, areas)} | {_hours(r.TotalTime)}{flag}"
 
 
@@ -266,15 +328,23 @@ def render_roster_list(
     """Render a list of shifts as a markdown section (times in ``tz_label``)."""
     if not rosters:
         return f"### {title}\n\n_No shifts found._"
-    lines = [f"### {title}", "", f"_Times shown in {tz_label}._", ""]
-    lines += [_roster_line(r, tz, areas) for r in rosters]
+    label = record_time_label(rosters, tz_label)
+    lines = [f"### {title}", "", f"_Times shown in {label}._", ""]
+    lines += [_roster_line(r, tz, areas, tz_label if label != tz_label else None) for r in rosters]
     return "\n".join(lines)
 
 
-def _timesheet_line(t: Timesheet, tz: tzinfo, areas: Mapping[int, str] | None) -> str:
-    end = "in progress" if t.EndTime is None else fmt_ts(t.EndTime, tz)
+def _timesheet_line(
+    t: Timesheet, tz: tzinfo, areas: Mapping[int, str] | None, fallback: str | None = None
+) -> str:
+    end = (
+        "in progress"
+        if t.EndTime is None
+        else fmt_record_time(t.EndTime, t.EndTimeLocalized, tz, fallback_label=fallback)
+    )
     live = " **[on the clock]**" if t.IsInProgress else ""
-    times = f"{fmt_ts(t.StartTime, tz)} - {end}"
+    start = fmt_record_time(t.StartTime, t.StartTimeLocalized, tz, fallback_label=fallback)
+    times = f"{start} - {end}"
     area = _area_label(t, areas)
     return f"- {times} | {_person(t)} | {area} | {_hours(t.TotalTime)}{live}"
 
@@ -291,8 +361,11 @@ def render_timesheet_list(
     if not timesheets:
         return f"### {title}\n\n_No timesheets found._"
     worked = sum(t.TotalTime for t in timesheets if t.TotalTime is not None)
-    lines = [f"### {title}", "", f"_Times shown in {tz_label}. Total worked: {worked:.2f}h._", ""]
-    lines += [_timesheet_line(t, tz, areas) for t in timesheets]
+    label = record_time_label(timesheets, tz_label)
+    lines = [f"### {title}", "", f"_Times shown in {label}. Total worked: {worked:.2f}h._", ""]
+    lines += [
+        _timesheet_line(t, tz, areas, tz_label if label != tz_label else None) for t in timesheets
+    ]
     return "\n".join(lines)
 
 
@@ -307,11 +380,23 @@ def render_who_is_working(
     clocked: list[Timesheet] = list(data.get("clocked_in", []))
     rostered: list[Roster] = list(data.get("rostered_now", []))
     at = data.get("at", "now")
-    lines = [f"### Who is working ({at})", "", f"_Times shown in {tz_label}._", ""]
+    records: list[Roster | Timesheet] = [*clocked, *rostered]
+    label = record_time_label(records, tz_label)
+    moment = _localized(at) if isinstance(at, str) else at
+    if isinstance(moment, datetime) and moment.utcoffset() is not None:
+        for record in records:
+            local = _localized(record.StartTimeLocalized) or _localized(record.EndTimeLocalized)
+            if local is not None:
+                at = f"{at}; local: {moment.astimezone(local.tzinfo).isoformat()}"
+                break
+    fallback = tz_label if label != tz_label else None
+    lines = [f"### Who is working ({at})", "", f"_Times shown in {label}._", ""]
     lines.append(f"**On the clock ({len(clocked)})** — actual clock-ins:")
-    lines += [_timesheet_line(t, tz, areas) for t in clocked] or ["- _Nobody clocked in._"]
+    lines += [_timesheet_line(t, tz, areas, fallback) for t in clocked] or [
+        "- _Nobody clocked in._"
+    ]
     lines += ["", f"**Rostered now ({len(rostered)})** — scheduled to be on:"]
-    lines += [_roster_line(r, tz, areas) for r in rostered] or ["- _Nobody scheduled._"]
+    lines += [_roster_line(r, tz, areas, fallback) for r in rostered] or ["- _Nobody scheduled._"]
     return "\n".join(lines)
 
 
@@ -410,9 +495,7 @@ def render_next_shift(
     """Render a single upcoming shift, or a 'none scheduled' note."""
     if roster is None:
         return "### Next shift\n\n_No upcoming shift scheduled._"
-    return "\n".join(
-        ["### Next shift", "", f"_Times shown in {tz_label}._", "", _roster_line(roster, tz, areas)]
-    )
+    return render_roster_list([roster], tz, tz_label, title="Next shift", areas=areas)
 
 
 def render_whoami(
@@ -434,12 +517,15 @@ def render_whoami(
     company_name = None
     if company is not None:
         company_name = company.CompanyName or company.TradingName
+    timezone_label = company_timezone_label(company) or (
+        "not exposed by Deputy (shift times use each shift's local time)"
+    )
     lines = [
         "### Deputy connection OK",
         "",
         f"- Signed in as: **{name}**",
         f"- Company/location: {company_name or 'unknown'}",
-        f"- Timezone: {tz_label}",
+        f"- Timezone: {timezone_label}",
     ]
     if clocked_in is not None:
         lines.append(f"- Clocked in now: {'yes' if clocked_in else 'no'}")

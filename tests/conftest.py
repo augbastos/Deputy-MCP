@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import keyring
 import pytest
@@ -279,6 +281,12 @@ def make_roster() -> Callable[..., dict[str, Any]]:
             "Modified": "2020-12-20T10:00:00",
         }
         base.update(overrides)
+        for field in ("StartTime", "EndTime"):
+            base.setdefault(f"{field}Localized", None)
+            if f"{field}Localized" not in overrides and base[field] is not None:
+                base[f"{field}Localized"] = datetime.fromtimestamp(
+                    base[field], ZoneInfo("Europe/Dublin")
+                ).isoformat()
         return base
 
     return _make
@@ -310,6 +318,12 @@ def make_timesheet() -> Callable[..., dict[str, Any]]:
             "Discarded": False,
         }
         base.update(overrides)
+        for field in ("StartTime", "EndTime"):
+            base.setdefault(f"{field}Localized", None)
+            if f"{field}Localized" not in overrides and base[field] is not None:
+                base[f"{field}Localized"] = datetime.fromtimestamp(
+                    base[field], ZoneInfo("Europe/Dublin")
+                ).isoformat()
         return base
 
     return _make

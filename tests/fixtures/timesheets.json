@@ -13,7 +13,9 @@
     "RealTime": true,
     "TimeApproved": true,
     "PayRuleApproved": true,
-    "Discarded": false
+    "Discarded": false,
+    "StartTimeLocalized": "2021-01-01T00:00:00+00:00",
+    "EndTimeLocalized": "2021-01-01T08:00:00+00:00"
   },
   {
     "Id": 7002,
@@ -29,6 +31,8 @@
     "RealTime": true,
     "TimeApproved": false,
     "PayRuleApproved": false,
-    "Discarded": false
+    "Discarded": false,
+    "StartTimeLocalized": "2021-01-01T08:00:00+00:00",
+    "EndTimeLocalized": null
   }
 ]
