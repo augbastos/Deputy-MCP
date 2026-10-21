@@ -343,7 +343,7 @@ def _cmd_login(*, open_browser: bool = True) -> int:
         _fail(exc)
         return 1
 
-    store = resolve_token_store(config.token_store_path)
+    store = resolve_token_store(config.token_store_path, config.oauth_client_id)
     try:
         store.save(tokens)
     except DeputyError as exc:
@@ -368,7 +368,11 @@ def _token_store_path() -> Path | None:
 
 def _cmd_logout() -> int:
     """Delete the stored OAuth token, if any."""
-    store = resolve_token_store(_token_store_path())
+    try:
+        client_id = DeputyConfig.from_env().oauth_client_id
+    except DeputyConfigError:
+        client_id = None
+    store = resolve_token_store(_token_store_path(), client_id)
     try:
         removed = store.delete()
     except DeputyError as exc:

@@ -77,13 +77,13 @@ _SUCCESS_HTML = (
     "<!doctype html><meta charset='utf-8'><title>Deputy MCP</title>"
     "<body style='font-family:system-ui;margin:3rem'>"
     "<h1>Authorized</h1><p>Deputy MCP is now signed in. "
-    "You can close this tab and return to the terminal.</p></body>"
+    "You can close this tab and return to your terminal or AI assistant.</p></body>"
 )
 _ERROR_HTML = (
     "<!doctype html><meta charset='utf-8'><title>Deputy MCP</title>"
     "<body style='font-family:system-ui;margin:3rem'>"
     "<h1>Sign-in failed</h1><p>Deputy MCP could not complete authorization. "
-    "Return to the terminal for details and try 'deputy-mcp login' again.</p></body>"
+    "Your terminal or AI assistant has the details; try signing in again from there.</p></body>"
 )
 
 

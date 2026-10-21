@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 #: Keychain service name (the "application" an OS credential entry belongs to).
 KEYRING_SERVICE = "deputy-mcp"
-#: Keychain account name for the single OAuth token set this tool keeps.
+#: Keychain account name for a token set that is not tied to a known OAuth client.
 KEYRING_USERNAME = "oauth-token"
 
 _NO_KEYCHAIN_HINT = (
@@ -64,6 +64,19 @@ _NO_KEYCHAIN_HINT = (
 def default_config_dir() -> Path:
     """Per-user directory for deputy-mcp's non-secret local files."""
     return Path.home() / ".deputy-mcp"
+
+
+def keyring_account(client_id: str | None) -> str:
+    """Keychain account for one OAuth client's tokens.
+
+    Each client gets its own entry: two installs (say, a work account in Claude Code and
+    a test account in a desktop bundle) must never read or overwrite each other's tokens.
+    A client id is a public OAuth identifier (it travels in the sign-in URL), so it can
+    name the entry as is.
+    """
+    if not client_id or not client_id.strip():
+        return KEYRING_USERNAME
+    return f"{KEYRING_USERNAME}:{client_id.strip()}"
 
 
 def legacy_token_path() -> Path:
@@ -207,11 +220,13 @@ class KeyringTokenStore:
     """The OS keychain via ``keyring`` — the default token store.
 
     Args:
+        account: Keychain account name, from :func:`keyring_account`.
         legacy_path: Plaintext token file from an older version to migrate from, or
             ``None`` to skip migration.
     """
 
-    def __init__(self, *, legacy_path: Path | None = None) -> None:
+    def __init__(self, *, account: str = KEYRING_USERNAME, legacy_path: Path | None = None) -> None:
+        self._account = account
         self._legacy_path = legacy_path
 
     @property
@@ -219,20 +234,20 @@ class KeyringTokenStore:
         return f"OS keychain ({_backend_name()})"
 
     def load(self) -> OAuthTokens | None:
-        raw = _keyring("read the OAuth token from", "get_password")
+        raw = _keyring(self._account, "read the OAuth token from", "get_password")
         stored = OAuthTokens.from_json(raw) if isinstance(raw, str) else None
         return self._migrate_legacy_file(stored)
 
     def save(self, tokens: OAuthTokens) -> None:
-        _keyring("save the OAuth token to", "set_password", tokens.to_json())
+        _keyring(self._account, "save the OAuth token to", "set_password", tokens.to_json())
 
     def delete(self) -> bool:
         # Look before deleting: backends disagree on what a failed delete raises (macOS
         # reports every Keychain error, a locked keychain included, as "not found"), so
         # the exception type cannot tell "nothing stored" from "could not delete".
         removed = False
-        if _keyring("read the OAuth token from", "get_password") is not None:
-            _keyring("remove the OAuth token from", "delete_password")
+        if _keyring(self._account, "read the OAuth token from", "get_password") is not None:
+            _keyring(self._account, "remove the OAuth token from", "delete_password")
             removed = True
         if self._legacy_path is not None and FileTokenStore(self._legacy_path).delete():
             removed = True
@@ -267,14 +282,14 @@ class KeyringTokenStore:
         return "KeyringTokenStore()"
 
 
-def resolve_token_store(token_store_path: Path | None) -> TokenStore:
-    """The file store when a path is configured, otherwise the OS keychain."""
+def resolve_token_store(token_store_path: Path | None, client_id: str | None = None) -> TokenStore:
+    """The file store when a path is configured, otherwise the client's keychain entry."""
     if token_store_path is not None:
         return FileTokenStore(token_store_path)
-    return KeyringTokenStore(legacy_path=legacy_token_path())
+    return KeyringTokenStore(account=keyring_account(client_id), legacy_path=legacy_token_path())
 
 
-def _keyring(action: str, method: str, *secret: str) -> str | None:
+def _keyring(account: str, action: str, method: str, *secret: str) -> str | None:
     """Call ``keyring.<method>`` for this tool's entry, mapping failures to a config error.
 
     A keychain backend can fail in platform-specific ways (no backend, a locked
@@ -285,7 +300,7 @@ def _keyring(action: str, method: str, *secret: str) -> str | None:
     import keyring
 
     try:
-        result: str | None = getattr(keyring, method)(KEYRING_SERVICE, KEYRING_USERNAME, *secret)
+        result: str | None = getattr(keyring, method)(KEYRING_SERVICE, account, *secret)
     except Exception as exc:
         raise DeputyConfigError(
             f"Could not {action} the OS keychain ({type(exc).__name__}).",

@@ -58,7 +58,7 @@ def register(mcp: FastMCP[Any], config: DeputyConfig) -> None:
         try:
             with contextlib.redirect_stdout(sys.stderr):
                 tokens = await oauth.run_login_flow(config, open_browser=True)
-            store = resolve_token_store(config.token_store_path)
+            store = resolve_token_store(config.token_store_path, config.oauth_client_id)
             store.save(tokens)
         except DeputyError as exc:
             lines = [f"Deputy sign-in did not complete: {exc.message}"]

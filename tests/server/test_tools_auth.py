@@ -18,6 +18,10 @@ from . import tool_text
 _ORIGIN = "https://acme.eu.deputy.com"
 
 
+def _store_path():  # type: ignore[no-untyped-def]
+    return DeputyConfig.from_env().token_store_path
+
+
 @pytest.fixture
 def oauth_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEPUTY_OAUTH_CLIENT_ID", "client-id")
@@ -50,7 +54,7 @@ async def test_login_tool_stores_tokens_and_keeps_stdout_clean(
 
     assert "Signed in to Deputy" in text
     assert "acc-new" not in text and "ref-new" not in text
-    stored = resolve_token_store(DeputyConfig.from_env().token_store_path).load()
+    stored = resolve_token_store(_store_path(), "client-id").load()
     assert stored is not None and stored.access_token == "acc-new"
     captured = capsys.readouterr()
     assert "Opening your browser" not in captured.out
@@ -68,4 +72,4 @@ async def test_login_tool_reports_failure_without_raising(
         text = tool_text(await client.call_tool("deputy_login", {}))
 
     assert text.startswith("Deputy sign-in did not complete: Timed out")
-    assert resolve_token_store(DeputyConfig.from_env().token_store_path).load() is None
+    assert resolve_token_store(_store_path(), "client-id").load() is None
