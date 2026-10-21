@@ -294,7 +294,7 @@ class DeputyConfig(BaseModel):
                 value cannot be parsed.
         """
         env = os.environ if environ is None else environ
-        env = _with_env_file(env, allow_cwd_default=environ is None)
+        env = _drop_unresolved_placeholders(_with_env_file(env, allow_cwd_default=environ is None))
 
         token = (env.get("DEPUTY_API_TOKEN") or "").strip()
         calendar_url = (env.get("DEPUTY_CALENDAR_URL") or "").strip()
@@ -366,6 +366,20 @@ class DeputyConfig(BaseModel):
                 "Invalid Deputy configuration.",
                 hint=_summarize_validation_error(exc),
             ) from exc
+
+
+def _drop_unresolved_placeholders(env: Mapping[str, str]) -> Mapping[str, str]:
+    """Treat ``${user_config.x}`` values as unset.
+
+    A desktop bundle maps its optional settings to ``DEPUTY_*`` variables, and Claude
+    Desktop passes a setting the user left blank as that literal template string. Read
+    as a value, it would select the wrong auth mode and fail on a bogus base URL.
+    """
+    return {
+        key: value
+        for key, value in env.items()
+        if not (value.strip().startswith("${user_config.") and value.strip().endswith("}"))
+    }
 
 
 def _with_env_file(env: Mapping[str, str], *, allow_cwd_default: bool) -> Mapping[str, str]:

@@ -211,3 +211,31 @@ def test_plain_http_base_url_is_refused_unless_custom_hosts_are_allowed() -> Non
             }
         )
     assert local.base_url == "http://127.0.0.1:8765"
+
+
+def test_unfilled_bundle_settings_are_treated_as_unset() -> None:
+    # Claude Desktop passes a blank optional bundle setting as the literal template.
+    config = DeputyConfig.from_env(
+        {
+            "DEPUTY_CALENDAR_URL": "${user_config.calendar_url}",
+            "DEPUTY_API_TOKEN": "${user_config.api_token}",
+            "DEPUTY_BASE_URL": "${user_config.base_url}",
+            "DEPUTY_OAUTH_CLIENT_ID": "client-id",
+            "DEPUTY_OAUTH_CLIENT_SECRET": "client-secret",
+            "DEPUTY_ALLOW_WRITES": "false",
+        }
+    )
+    assert config.mode == "api"
+    assert config.api_token is None
+    assert config.calendar_url is None
+    assert config.oauth_client_id == "client-id"
+
+
+def test_only_unfilled_bundle_settings_fail_with_the_no_credentials_error() -> None:
+    with pytest.raises(DeputyConfigError, match="No Deputy credentials found"):
+        DeputyConfig.from_env(
+            {
+                "DEPUTY_API_TOKEN": "${user_config.api_token}",
+                "DEPUTY_BASE_URL": "${user_config.base_url}",
+            }
+        )
