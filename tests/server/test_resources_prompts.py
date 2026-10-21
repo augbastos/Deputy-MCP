@@ -73,7 +73,7 @@ async def test_weekly_roster_resource_renders(
         contents = await client.read_resource(uri)
     body = contents[0].text
     assert "My roster" in body
-    assert "Europe/Dublin" in body
+    assert "the workplace's local time (UTC+00:00)" in body
 
 
 async def test_resource_error_is_graceful(deputy_api: respx.MockRouter) -> None:

@@ -14,8 +14,11 @@ from __future__ import annotations
 from deputy_mcp.render import (
     ResponseFormat,
     areas_by_id,
+    company_timezone_label,
     employee_display,
+    fmt_record_time,
     fmt_ts,
+    record_time_label,
     render,
     render_areas,
     render_calendar_url,
@@ -35,8 +38,11 @@ from deputy_mcp.render import (
 __all__ = [
     "ResponseFormat",
     "areas_by_id",
+    "company_timezone_label",
     "employee_display",
+    "fmt_record_time",
     "fmt_ts",
+    "record_time_label",
     "render",
     "render_areas",
     "render_calendar_url",

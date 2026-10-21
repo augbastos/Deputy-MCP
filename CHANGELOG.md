@@ -4,6 +4,13 @@ All notable changes to Deputy MCP. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/) (pre-1.0: a minor version may break).
 
+## [Unreleased]
+
+### Fixed
+
+- Shift, timesheet and unavailability times use Deputy's per-record local offsets,
+  including DST changes; timezone labels now distinguish local times from UTC fallback.
+
 ## [0.4.1] — 2026-10-21
 
 Found by installing the desktop bundle in Claude Desktop.

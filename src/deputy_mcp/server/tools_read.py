@@ -46,6 +46,7 @@ from deputy_mcp.server._read_helpers import (
 from deputy_mcp.server.formatting import (
     ResponseFormat,
     areas_by_id,
+    company_timezone_label,
     render,
     render_areas,
     render_calendar_url,
@@ -167,7 +168,8 @@ def register(
     ) -> str:
         """Verify the Deputy connection and confirm which identity the token uses.
 
-        Returns who the API token authenticates as, the company/location and its timezone,
+        Returns who the API token authenticates as, the company/location and its timezone
+        when exposed by Deputy (otherwise null in JSON; shifts use their local times),
         whether that user is clocked in right now (from their in-progress timesheet), and
         whether a personal calendar feed exists. Run this first to confirm setup before
         other tools.
@@ -201,7 +203,7 @@ def register(
                 company = await client.get_company()
             except DeputyError:
                 company = None
-            _, tz_label = resolve_timezone(company)
+            tz_label = company_timezone_label(company)
             clocked_in = whoami_is_clocked_in(who)
             has_feed = whoami_calendar_url(who) is not None
             company_name = (
@@ -224,7 +226,7 @@ def register(
             return render(
                 data,
                 lambda: render_whoami(
-                    who, company, tz_label, clocked_in=clocked_in, calendar_feed=has_feed
+                    who, company, tz_label or "UTC", clocked_in=clocked_in, calendar_feed=has_feed
                 ),
                 response_format,
             )

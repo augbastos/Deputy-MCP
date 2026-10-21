@@ -65,6 +65,8 @@ class _ShiftLike(DeputyModel):
     Id: int | None = None
     StartTime: int | None = None
     EndTime: int | None = None
+    StartTimeLocalized: str | None = None
+    EndTimeLocalized: str | None = None
     Date: str | None = None
     Employee: int | None = None
     OperationalUnit: int | None = None
@@ -236,6 +238,8 @@ class Unavailability(DeputyModel):
     """
 
     Id: int | None = None
+    StartTimeLocalized: str | None = None
+    EndTimeLocalized: str | None = None
     Type: int | None = None
     Comment: str | None = None
     MaxDateRecurringGenerated: str | None = None
