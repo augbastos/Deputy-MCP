@@ -283,12 +283,14 @@ class ReadsMixin:
 
             # The Published filter excludes draft shifts:
             # a drafted-but-unpublished shift is not really "scheduled on" right now.
+            # Unassigned shifts are excluded by Employee, not by Open: a live install
+            # returns Open as null on ordinary shifts, and "ne True" drops nulls too.
             rostered_builder = (
                 QueryBuilder()
                 .where("StartTime", "le", now)
                 .where("EndTime", "gt", now)
                 .where("Published", "eq", True)
-                .where("Open", "ne", True)
+                .where("Employee", "gt", 0)
                 .join(EMPLOYEE_JOIN)
             )
             rostered_records = await query_all(self._http, "Roster", rostered_builder)

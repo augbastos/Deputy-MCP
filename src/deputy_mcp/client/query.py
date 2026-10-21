@@ -79,7 +79,7 @@ class QueryBuilder:
             QueryBuilder()
             .where("StartTime", "le", "1663084585")
             .where("EndTime", "gt", "1663084585")
-            .where("Open", "ne", True)
+            .where("Employee", "gt", 0)
             .join("OperationalUnitObject")
             .sort("StartTime")
             .max(500)
