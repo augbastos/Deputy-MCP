@@ -49,6 +49,7 @@ def test_env_fallback(argv: list[str], monkeypatch: pytest.MonkeyPatch, server: 
         host="::1",
         port=47999,
         show_banner=False,
+        host_origin_protection=True,
     )
 
 
@@ -68,6 +69,7 @@ def test_cli_wins(position: str, monkeypatch: pytest.MonkeyPatch, server: Mock) 
         host="localhost",
         port=47999,
         show_banner=False,
+        host_origin_protection=True,
     )
 
 
@@ -107,6 +109,7 @@ def test_remote_override_warns(
         host="0.0.0.0",
         port=8000,
         show_banner=False,
+        host_origin_protection=True,
     )
     captured = capsys.readouterr()
     assert captured.out == ""

@@ -216,6 +216,12 @@ and `localhost` are refused unless `--allow-remote` or
 anyone who can reach the port acts with the configured Deputy credentials.
 Keep this listener local unless you provide appropriate access controls.
 
+Every request has its `Host` and `Origin` headers checked (FastMCP's strict
+host/origin guard), so a web page cannot reach the listener through DNS rebinding:
+an unknown `Host` gets 421 and a foreign `Origin` gets 403. Loopback names and the
+bind address are accepted; bind a specific interface address rather than `0.0.0.0`
+when using `--allow-remote`.
+
 ### Read commands
 
 The same client ships as a command-line tool:

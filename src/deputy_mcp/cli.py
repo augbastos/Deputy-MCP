@@ -411,7 +411,15 @@ def _serve(args: argparse.Namespace) -> int:
         return 1
     # stdout is the protocol channel; keep stderr to our one status line (no banner).
     if args.transport == "http":
-        server.run(transport="http", host=args.host, port=args.port, show_banner=False)
+        # Strict Host/Origin checks on every request: there is no MCP auth, so this is
+        # what stops a web page from reaching the server through DNS rebinding.
+        server.run(
+            transport="http",
+            host=args.host,
+            port=args.port,
+            show_banner=False,
+            host_origin_protection=True,
+        )
     else:
         server.run(transport="stdio", show_banner=False)
     return 0
