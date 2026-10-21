@@ -24,7 +24,6 @@ No token value is ever logged, placed in an exception, or rendered by ``repr``.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -72,12 +71,12 @@ def keyring_account(client_id: str | None) -> str:
 
     Each client gets its own entry: two installs (say, a work account in Claude Code and
     a test account in a desktop bundle) must never read or overwrite each other's tokens.
-    The id is hashed so the entry name does not reveal it.
+    A client id is a public OAuth identifier (it travels in the sign-in URL), so it can
+    name the entry as is.
     """
-    if not client_id:
+    if not client_id or not client_id.strip():
         return KEYRING_USERNAME
-    digest = hashlib.sha256(client_id.strip().encode("utf-8")).hexdigest()[:12]
-    return f"{KEYRING_USERNAME}:{digest}"
+    return f"{KEYRING_USERNAME}:{client_id.strip()}"
 
 
 def legacy_token_path() -> Path:

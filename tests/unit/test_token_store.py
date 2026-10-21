@@ -366,8 +366,7 @@ def test_each_oauth_client_has_its_own_keychain_entry(memory_keyring: Any) -> No
     assert loaded is not None and loaded.access_token == "work-acc"
 
 
-def test_keychain_account_does_not_reveal_the_client_id() -> None:
-    account = keyring_account("my-secret-client-id")
-    assert "my-secret-client-id" not in account
-    assert account == keyring_account("my-secret-client-id")
-    assert keyring_account(None) == "oauth-token"
+def test_keychain_account_is_per_client_and_falls_back_without_one() -> None:
+    assert keyring_account("client-a") != keyring_account("client-b")
+    assert keyring_account(" client-a ") == keyring_account("client-a")
+    assert keyring_account(None) == keyring_account("") == "oauth-token"
