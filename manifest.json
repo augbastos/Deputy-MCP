@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "deputy-mcp",
   "display_name": "Deputy MCP",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Deputy workforce data for AI agents: rosters, timesheets and shifts; read-only by default",
   "author": {
     "name": "Augusto Bastos"

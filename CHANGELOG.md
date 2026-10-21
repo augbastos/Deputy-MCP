@@ -4,12 +4,15 @@ All notable changes to Deputy MCP. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/) (pre-1.0: a minor version may break).
 
-## [Unreleased]
+## [0.4.2] — 2026-10-21
 
 ### Fixed
 
-- Shift, timesheet and unavailability times use Deputy's per-record local offsets,
-  including DST changes; timezone labels now distinguish local times from UTC fallback.
+- Times were shown in UTC, an hour off for Irish summer time. Deputy exposes no install
+  timezone, but every shift, timesheet and unavailability carries its own local offset;
+  times now use it, DST changes included, with UTC only as a labelled fallback. Checked
+  against a live install's app.
+- `deputy_whoami` no longer reports "UTC" as the timezone when Deputy does not expose one.
 
 ## [0.4.1] — 2026-10-21
 
