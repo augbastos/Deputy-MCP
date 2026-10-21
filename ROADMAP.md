@@ -51,13 +51,3 @@ stdio suits a desktop client. A remote deployment would use MCP's Streamable HTT
 transport with MCP authorization in front of it, so that the Deputy OAuth token never
 reaches the MCP client. FastMCP 4 provides both; the open questions are hosting and
 per-user token isolation.
-
-## Distribution
-
-- Publish to PyPI, so `uvx deputy-mcp` works without a Git URL.
-- List the server in the MCP Registry using the `server.json` already in the
-  repository.
-- An MCPB desktop bundle with a form for the credentials, for people who do not use a
-  terminal.
-
-No registry listing or package page will be linked from the README until it exists.

@@ -53,10 +53,10 @@ dependencies = [
 deputy-mcp = "deputy_mcp.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/augbastos/Deputy-MCP"
-Repository = "https://github.com/augbastos/Deputy-MCP"
-Issues = "https://github.com/augbastos/Deputy-MCP/issues"
-Changelog = "https://github.com/augbastos/Deputy-MCP/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/augbastos/deputy-mcp"
+Repository = "https://github.com/augbastos/deputy-mcp"
+Issues = "https://github.com/augbastos/deputy-mcp/issues"
+Changelog = "https://github.com/augbastos/deputy-mcp/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
@@ -89,6 +89,8 @@ include = [
     "/CHANGELOG.md",
     "/pyproject.toml",
     "/uv.lock",
+    "/manifest.json",
+    "/server.json",
 ]
 
 [tool.ruff]

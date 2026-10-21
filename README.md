@@ -2,8 +2,8 @@
 
 <!-- mcp-name: io.github.augbastos/deputy-mcp -->
 
-[![CI](https://github.com/augbastos/Deputy-MCP/actions/workflows/ci.yml/badge.svg)](https://github.com/augbastos/Deputy-MCP/actions/workflows/ci.yml)
-[![Security](https://github.com/augbastos/Deputy-MCP/actions/workflows/security.yml/badge.svg)](https://github.com/augbastos/Deputy-MCP/actions/workflows/security.yml)
+[![CI](https://github.com/augbastos/deputy-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/augbastos/deputy-mcp/actions/workflows/ci.yml)
+[![Security](https://github.com/augbastos/deputy-mcp/actions/workflows/security.yml/badge.svg)](https://github.com/augbastos/deputy-mcp/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Ask Claude *"when do I work next?"* and get the answer from your
@@ -42,11 +42,11 @@ then register the server with Claude Code:
 ```bash
 export DEPUTY_OAUTH_CLIENT_ID='your-client-id'
 export DEPUTY_OAUTH_CLIENT_SECRET='your-client-secret'
-uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp login
+uvx deputy-mcp login
 claude mcp add deputy \
   -e DEPUTY_OAUTH_CLIENT_ID="$DEPUTY_OAUTH_CLIENT_ID" \
   -e DEPUTY_OAUTH_CLIENT_SECRET="$DEPUTY_OAUTH_CLIENT_SECRET" \
-  -- uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp
+  -- uvx deputy-mcp
 ```
 
 Login opens your browser and stores OAuth tokens in your OS keychain by default.
@@ -60,10 +60,21 @@ With your Deputy API token and install URL, register directly; no OAuth login is
 claude mcp add deputy \
   -e DEPUTY_API_TOKEN=your-deputy-token \
   -e DEPUTY_BASE_URL=https://your-company.eu.deputy.com \
-  -- uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp
+  -- uvx deputy-mcp
 ```
 
-Claude Desktop, other MCP clients and Docker: see [other ways to install](docs/DESIGN.md#other-ways-to-install).
+### Codex CLI
+
+For your own roster, replace `...` with your private calendar feed URL:
+```bash
+codex mcp add deputy --env DEPUTY_CALENDAR_URL=... -- uvx deputy-mcp
+```
+
+The first `uvx` run downloads dependencies; if Codex reports the tools as unavailable,
+set `startup_timeout_sec = 60` under `[mcp_servers.deputy]` in `~/.codex/config.toml`.
+
+Claude Desktop users: look for the `.mcpb` bundle on the [Releases page](https://github.com/augbastos/deputy-mcp/releases).
+Other MCP clients and Docker: see [other ways to install](docs/DESIGN.md#other-ways-to-install).
 All settings are listed in [`.env.example`](.env.example).
 
 ## Tools

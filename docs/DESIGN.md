@@ -168,7 +168,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "deputy": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/augbastos/Deputy-MCP", "deputy-mcp"],
+      "args": ["--from", "git+https://github.com/augbastos/deputy-mcp", "deputy-mcp"],
       "env": {
         "DEPUTY_OAUTH_CLIENT_ID": "your-client-id",
         "DEPUTY_OAUTH_CLIENT_SECRET": "your-client-secret"
@@ -178,12 +178,12 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-With OAuth, run `uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp login`
+With OAuth, run `uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp login`
 once, with the same two variables set, before starting the client.
 
 ### Other MCP clients
 
-Run `uvx --from git+https://github.com/augbastos/Deputy-MCP deputy-mcp` as a stdio
+Run `uvx --from git+https://github.com/augbastos/deputy-mcp deputy-mcp` as a stdio
 server with the `DEPUTY_*` variables from [Configuration](#configuration). The server negotiates MCP `2026-07-28` with
 current clients and the handshake revisions up to `2025-11-25` with older ones.
 
@@ -199,6 +199,24 @@ has no keychain, so for OAuth mount a volume and point `DEPUTY_TOKEN_STORE` at i
 and iCal modes need nothing extra.
 
 ## CLI
+
+### Local HTTP transport
+
+Stdio remains the default. To serve Streamable HTTP locally, run
+`deputy-mcp --transport http --host 127.0.0.1 --port 8000` and connect your MCP
+client to `http://127.0.0.1:8000/mcp`. An explicit `serve` subcommand also accepts
+these flags. `DEPUTY_MCP_TRANSPORT`, `DEPUTY_MCP_HOST`, and `DEPUTY_MCP_PORT`
+provide environment fallbacks; command-line flags win. Defaults are `stdio`,
+`127.0.0.1`, and `8000`. Transport settings are read from the process environment,
+not dotenv files. Startup status goes to stderr.
+
+There is no MCP-level authentication. HTTP hosts other than `127.0.0.1`, `::1`,
+and `localhost` are refused unless `--allow-remote` or
+`DEPUTY_MCP_ALLOW_REMOTE=true` is set. With that override, startup warns that
+anyone who can reach the port acts with the configured Deputy credentials.
+Keep this listener local unless you provide appropriate access controls.
+
+### Read commands
 
 The same client ships as a command-line tool:
 
