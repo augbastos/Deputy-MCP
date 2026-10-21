@@ -44,8 +44,8 @@ a Deputy approval flow needs explicit human confirmation, implemented with MCP
 elicitation on both protocol eras: `ctx.elicit()` on handshake connections, and an
 `InputRequiredResult` whose approval is bound to the exact shift through FastMCP's
 sealed `request_state` on `2026-07-28`. Routine self-service writes (clock in/out,
-unavailability) and swap requests, which a manager still approves, deliberately do not
-prompt: friction without protection trains people to click "yes".
+unavailability) deliberately do not prompt: friction without protection trains people
+to click "yes".
 
 **Retries follow idempotency, not status codes.** GETs and Deputy's read-only QUERY
 POSTs retry on 429, 502–504 and timeouts with full-jitter exponential backoff that
@@ -119,7 +119,6 @@ In iCal mode only the four tools marked *iCal* are registered.
 | Tool | Arguments | Behaviour |
 |---|---|---|
 | `deputy_claim_open_shift` | `shift_id` | Asks the user to confirm, then assigns the open shift to them |
-| `deputy_request_shift_swap` | `shift_id`, `note` | Submits a swap for manager approval |
 | `deputy_set_unavailability` | `start`, `end`, `reason`, `repeat` (RRULE) | Records a one-off or recurring block |
 | `deputy_clock_in` | `area_id` | Starts a timesheet now |
 | `deputy_clock_out` | `mealbreak_minutes` | Ends your running timesheet |

@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from deputy_mcp.client.errors import DeputyError, DeputyWritesDisabledError
-from deputy_mcp.client.models import DeputyModel, Roster, RosterSwap, Timesheet, Unavailability
+from deputy_mcp.client.models import DeputyModel, Roster, Timesheet, Unavailability
 from deputy_mcp.client.reads import in_progress_timesheet_id
 
 if TYPE_CHECKING:
@@ -39,10 +39,6 @@ if TYPE_CHECKING:
 __all__ = ["WritesMixin"]
 
 _ModelT = TypeVar("_ModelT", bound=DeputyModel)
-
-#: RosterSwap.Status = 4 (Pending Approval): submitted and awaiting a manager, who
-#: advances it to 5 (Approved). The full code table is on :class:`RosterSwap`.
-_SWAP_STATUS_PENDING_APPROVAL = 4
 
 #: Valid iCal RRULE FREQ values Deputy accepts for recurring unavailability.
 _RRULE_FREQS = frozenset({"WEEKLY", "MONTHLY"})
@@ -95,13 +91,13 @@ class WritesMixin:
                 f"Shift {roster_id} is not an open shift; refusing to reassign it.",
                 hint=(
                     "Only unassigned open shifts can be claimed. Check the shift id, or "
-                    "use a shift-swap request to take over an already-assigned shift."
+                    "use the Deputy app to take over an already-assigned shift."
                 ),
             )
         return roster
 
     async def claim_open_shift(self, roster_id: int) -> None:
-        """Assign the current user to an open (unassigned) shift.
+        """Assign the current user to an open shift, preserving its published status.
 
         Deputy exposes **no** employee-facing "claim/accept open shift" API endpoint.
         The documented way to fill an open roster is to update it: ``POST
@@ -145,6 +141,8 @@ class WritesMixin:
             "intRosterEmployee": employee_id,
             "blnOpen": 0,
         }
+        if roster.Published:
+            body["blnPublish"] = 1
         # Preserve the shift's existing time/area so a full upsert cannot blank them.
         if roster.StartTime is not None:
             body["intStartTimestamp"] = roster.StartTime
@@ -154,46 +152,6 @@ class WritesMixin:
             body["intOpunitId"] = roster.OperationalUnit
         await self._http.request("POST", "/supervise/roster", json_body=body)
         self._http.invalidate()
-
-    async def request_shift_swap(self, roster_id: int, note: str | None = None) -> RosterSwap:
-        """Create a shift-swap request for one of the current user's shifts.
-
-        Modelled by the ``RosterSwap`` resource. There is no
-        dedicated swap "submit" action endpoint, so the record is created via the
-        generic Resource API with ``Status = 4`` (Pending Approval). A manager drives
-        later transitions (``5`` Approved / ``7`` Declined); the exact accept/approve
-        semantics are not fully documented by Deputy and should be validated live.
-
-        This simplified tool models "offer my shift up for swap, pending approval"
-        (``SourceRoster`` = your shift). It does **not** target a specific replacement
-        shift/employee: ``TargetRoster`` is sent as ``0`` (no specific target). See the
-        deviation note if your install rejects an untargeted swap.
-
-        Args:
-            roster_id: ``Roster.Id`` of the shift you want to give up (SourceRoster).
-            note: Optional message stored as ``RequestMessage``.
-
-        Returns:
-            The created :class:`~deputy_mcp.client.models.RosterSwap`.
-
-        Raises:
-            DeputyWritesDisabledError: When writes are disabled.
-            DeputyPermissionError: HTTP 403 -- the user may not create this swap.
-            DeputyError: Any other API/transport failure (including a rejected body).
-        """
-        self._require_writes()
-        employee_id = await self.own_employee_id()
-        body: dict[str, Any] = {
-            "SourceRoster": roster_id,
-            "TargetRoster": 0,
-            "Employee": employee_id,
-            "Status": _SWAP_STATUS_PENDING_APPROVAL,
-        }
-        if note:
-            body["RequestMessage"] = note
-        data = await self._http.request("POST", "/resource/RosterSwap", json_body=body)
-        self._http.invalidate()
-        return _as_model(data, RosterSwap)
 
     async def set_unavailability(
         self,

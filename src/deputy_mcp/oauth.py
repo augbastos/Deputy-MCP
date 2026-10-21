@@ -68,7 +68,7 @@ _ENDPOINT_FIELDS = ("endpoint", "install", "Endpoint")
 
 #: One actionable hint reused across auth failures (never contains a secret).
 _LOGIN_HINT = (
-    "Re-run 'deputy-mcp login'. Check DEPUTY_OAUTH_CLIENT_ID / "
+    "Try again (the deputy_login tool or 'deputy-mcp login'). Check DEPUTY_OAUTH_CLIENT_ID / "
     "DEPUTY_OAUTH_CLIENT_SECRET are correct and that the app's redirect URI "
     "matches exactly (default http://localhost:8823/callback)."
 )

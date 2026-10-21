@@ -32,7 +32,6 @@ __all__ = [
     "Employee",
     "OperationalUnit",
     "Roster",
-    "RosterSwap",
     "Timesheet",
     "Unavailability",
     "WhoAmI",
@@ -224,23 +223,6 @@ class Contact(DeputyModel):
     Email2: str | None = None
     PrimaryPhone: int | None = None
     PrimaryEmail: int | None = None
-
-
-class RosterSwap(DeputyModel):
-    """A shift-swap request (``/resource/RosterSwap``).
-
-    ``Status`` codes: 0 Not required, 1 Pending Out, 2 Pending In, 3 Pending In Out,
-    4 Pending Approval (manager gate), 5 Approved, 6 Cancelled, 7 Declined. FK fields:
-    ``SourceRoster``/``TargetRoster`` -> Roster.Id, ``Employee`` -> Employee.Id.
-    """
-
-    Id: int | None = None
-    SourceRoster: int | None = None
-    TargetRoster: int | None = None
-    Employee: int | None = None
-    Status: int | None = None
-    RequestMessage: str | None = None
-    ResponseMessage: str | None = None
 
 
 class Unavailability(DeputyModel):

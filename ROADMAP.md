@@ -13,7 +13,7 @@ validated against a live Deputy install with an employee account. These have not
   have only been seen returning their permission error. The QUERY association name
   used to attach employee names (`EmployeeObject`) is Deputy's documented example and
   is probed by the live suite, but still needs a manager or admin token to confirm.
-- **Write tools.** Clock in/out, unavailability, swap requests and open-shift claims are
+- **Write tools.** Clock in/out, unavailability and open-shift claims are
   built on Deputy's documented `/supervise` and Resource endpoints and are covered by
   mocked tests only. They should be exercised against a trial install before anyone
   relies on them.
@@ -25,11 +25,14 @@ validated against a live Deputy install with an employee account. These have not
 
 ## Manager workflows with confirmation
 
-Approving timesheets, and approving or declining swap requests, would turn the server
-into something a shift manager can run their day from. These act on other people's
-pay and schedules, so they would reuse the elicitation gate that open-shift claims
-already use, sit behind a second opt-in on top of `DEPUTY_ALLOW_WRITES`, and show
-exactly which timesheets or swaps a confirmation covers.
+Approving timesheets would turn the server into something a shift manager can run
+their day from. These act on other people's pay, so they would reuse the elicitation
+gate that open-shift claims already use, sit behind a second opt-in on top of
+`DEPUTY_ALLOW_WRITES`, and show
+exactly which timesheets a confirmation covers.
+
+Shift swaps stay in the Deputy app: the public API exposes RosterSwap as read-only,
+with no swap-create endpoint.
 
 ## Change notifications
 

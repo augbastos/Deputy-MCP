@@ -87,7 +87,7 @@ All settings are listed in [`.env.example`](.env.example).
 - **Team** (manager access): `deputy_get_team_roster`, `deputy_who_is_working`,
   `deputy_get_employee_info`, `deputy_search_shifts`
 - **Actions** (only with `DEPUTY_ALLOW_WRITES=true`): `deputy_clock_in`,
-  `deputy_clock_out`, `deputy_set_unavailability`, `deputy_request_shift_swap`,
+  `deputy_clock_out`, `deputy_set_unavailability`,
   `deputy_claim_open_shift`
 
 ## Safe by default

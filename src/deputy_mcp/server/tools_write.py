@@ -1,6 +1,6 @@
 """MCP write tools for Deputy (opt-in, gated behind ``DEPUTY_ALLOW_WRITES``).
 
-This module registers the five *mutating* tools. It is imported and wired by
+This module registers the four *mutating* tools. It is imported and wired by
 :mod:`deputy_mcp.server.app` **only when** ``config.allow_writes`` is true, so the
 write tools are entirely invisible to a client when writes are disabled -- the
 safest default for a workforce system a language model can drive.
@@ -20,8 +20,7 @@ reach an external system, the Deputy install).
 Only ``deputy_claim_open_shift`` asks the user to confirm through MCP elicitation
 (:mod:`deputy_mcp.server._confirm`), because it is the one action that skips a Deputy
 approval step. Clock in/out and unavailability act on the user's own record and are
-routine, and a swap request only *submits* something a manager still approves, so an
-extra prompt there would add friction without adding protection.
+routine, so an extra prompt there would add friction without adding protection.
 """
 
 from __future__ import annotations
@@ -52,18 +51,6 @@ __all__ = ["register"]
 #: :class:`~deputy_mcp.client.DeputyClient` that ``app.py`` builds once in its lifespan.
 ClientProvider = Callable[[], "DeputyClient"]
 
-#: RosterSwap.Status integer -> human label (Deputy's documented RosterSwap status codes).
-_SWAP_STATUS_LABELS: dict[int | None, str] = {
-    0: "Not required",
-    1: "Pending Out",
-    2: "Pending In",
-    3: "Pending In Out",
-    4: "Pending Approval",
-    5: "Approved",
-    6: "Cancelled",
-    7: "Declined",
-}
-
 
 # --------------------------------------------------------------------------- #
 # Registration
@@ -82,7 +69,7 @@ def _write_annotations(title: str) -> ToolAnnotations:
 
 
 def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
-    """Register the five Deputy write tools on ``mcp``.
+    """Register the four Deputy write tools on ``mcp``.
 
     Called by :func:`deputy_mcp.server.app.create_server` **only** when
     ``DEPUTY_ALLOW_WRITES`` is enabled, so absence of these tools is itself the
@@ -115,8 +102,9 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         approve it through the MCP client (elicitation); nothing changes unless they
         accept, and clients without elicitation support cannot claim shifts.
 
-        When NOT to use: to *offer* one of your own shifts to others (use
-        deputy_request_shift_swap), or when a manager must approve pick-ups (that
+        When NOT to use: to find shifts (use deputy_search_shifts), to *offer* one
+        of your own shifts to others (use
+        the Deputy app), or when a manager must approve pick-ups (that
         pathway is UI-only and not exposed here).
 
         Returns markdown (a confirmation, or why nothing was claimed; Deputy returns an
@@ -148,55 +136,6 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
             return _format_error(exc)
         data = {"shift_id": shift_id, "claimed": True, "reason": None}
         return render(data, lambda: _md_claim(data), response_format)
-
-    @mcp.tool(
-        name="deputy_request_shift_swap",
-        annotations=_write_annotations("Request shift swap"),
-    )
-    async def deputy_request_shift_swap(
-        shift_id: Annotated[
-            int,
-            Field(description="Roster.Id of your shift to offer up for swap.", gt=0),
-        ],
-        note: Annotated[
-            str | None,
-            Field(description="Optional message stored with the swap request.", max_length=500),
-        ] = None,
-        response_format: Annotated[ResponseFormat, _FORMAT_FIELD] = "markdown",
-    ) -> str:
-        """Offer one of the signed-in user's shifts up for swap, pending approval.
-
-        Creates a ``RosterSwap`` record with status *Pending Approval* (4). A manager
-        drives later transitions (approve -> 5, decline -> 7); this tool only submits
-        the request, it does not approve anything. The swap is untargeted (no specific
-        replacement shift) -- some installs may reject that; see the tool's error.
-
-        When NOT to use: to approve/decline an existing swap (manager action, not
-        exposed), or to claim an open shift (use deputy_claim_open_shift).
-
-        Returns markdown (a confirmation of the submitted request) or, with
-        response_format="json", the object ``{"swap_id", "source_shift_id", "status",
-        "status_label", "note"}``.
-
-        Args:
-            shift_id: ``Roster.Id`` of the shift you want to give up.
-            note: Optional request message.
-            response_format: ``markdown`` (default) or ``json``.
-        """
-        try:
-            client = get_client()
-            swap = await client.request_shift_swap(shift_id, note)
-        except DeputyError as exc:
-            return _format_error(exc)
-        record = swap.model_dump(mode="json")
-        data = {
-            "swap_id": record.get("Id"),
-            "source_shift_id": record.get("SourceRoster"),
-            "status": record.get("Status"),
-            "status_label": _SWAP_STATUS_LABELS.get(record.get("Status")),
-            "note": record.get("RequestMessage"),
-        }
-        return render(data, lambda: _md_swap(data), response_format)
 
     @mcp.tool(
         name="deputy_set_unavailability",
@@ -233,8 +172,9 @@ def register(mcp: FastMCP[Any], get_client: ClientProvider) -> None:
         given). Times are ISO 8601; a value without a timezone offset is treated as
         UTC. The end must be strictly after the start.
 
-        When NOT to use: to give away one shift you are already rostered on (use
-        deputy_request_shift_swap), or to request leave (not modelled here) -- this
+        When NOT to use: to view your schedule (use deputy_get_my_roster), to give
+        away one shift you are already rostered on (use
+        the Deputy app), or to request leave (not modelled here) -- this
         blocks your availability for the whole window.
 
         Returns markdown (a confirmation of the recorded window) or, with
@@ -397,22 +337,6 @@ def _md_not_claimed(data: dict[str, Any]) -> str:
             "elicitation, so it cannot ask you. Claim the shift in Deputy instead."
         )
     return f"**Open shift {data['shift_id']} was not claimed** -- the request was declined."
-
-
-def _md_swap(data: dict[str, Any]) -> str:
-    """Confirmation for a submitted shift-swap request."""
-    label = data.get("status_label") or "submitted"
-    lines = [
-        f"**Shift-swap request created (#{data.get('swap_id')}).**",
-        "",
-        f"- Shift offered: {data.get('source_shift_id')}",
-        f"- Status: {label}",
-    ]
-    if data.get("note"):
-        lines.append(f"- Note: {data['note']}")
-    lines.append("")
-    lines.append("A manager must approve or decline this request.")
-    return "\n".join(lines)
 
 
 def _md_unavail(data: dict[str, Any]) -> str:
