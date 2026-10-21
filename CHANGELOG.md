@@ -4,6 +4,22 @@ All notable changes to Deputy MCP. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/) (pre-1.0: a minor version may break).
 
+## [0.3.0] — 2026-10-21
+
+### Added
+
+- Opt-in local Streamable HTTP transport with `--transport http`, host/port flags,
+  and `DEPUTY_MCP_*` environment fallbacks. Non-loopback binds require an explicit
+  remote-access override and warn that MCP access has no authentication.
+- Tag-triggered builds, PyPI Trusted Publishing, MCP Registry publishing and MCPB
+  release bundles. Publication requires the repository's release configuration.
+- A desktop bundle manifest with optional credentials and writes disabled by default.
+- PyPI install commands and Codex CLI setup instructions.
+
+### Changed
+
+- Canonical repository URLs use `augbastos/deputy-mcp`.
+
 ## [0.2.0] — unreleased
 
 ### Changed — breaking

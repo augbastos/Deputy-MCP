@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report vulnerabilities privately through
-[GitHub private vulnerability reporting](https://github.com/augbastos/Deputy-MCP/security/advisories/new).
+[GitHub private vulnerability reporting](https://github.com/augbastos/deputy-mcp/security/advisories/new).
 Do not open a public issue. Include the version or commit, what an attacker can do, and
 the steps to reproduce. Never include a real Deputy token, OAuth secret, calendar-feed
 link or anyone's roster data; fictional values are enough.

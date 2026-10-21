@@ -2,7 +2,7 @@
 
 Two roles share one entry point:
 
-* With no subcommand (or ``serve``) it launches the MCP server on stdio. The
+* With no subcommand (or ``serve``) it launches the MCP server on stdio by default. The
   ``create_server`` factory is imported *lazily* inside the serve path so that
   client-only CLI use never pulls in ``fastmcp``. In serve mode stdout belongs to
   the MCP protocol, so this module writes only to stderr there.
@@ -92,13 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         parents=[common],
     )
+    _add_serve_arguments(parser)
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    sub.add_parser(
+    p_serve = sub.add_parser(
         "serve",
         parents=[common],
-        help="Run the MCP server on stdio (the default when no command is given).",
+        help="Run the MCP server (stdio by default; HTTP is opt-in).",
     )
+    _add_serve_arguments(p_serve, suppress_defaults=True)
     sub.add_parser("whoami", parents=[common], help="Show the authenticated user and location.")
 
     p_roster = sub.add_parser("roster", parents=[common], help="Show a roster (yours by default).")
@@ -140,6 +142,60 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub.add_parser("logout", help="Delete the stored OAuth token (sign out).")
     return parser
+
+
+def _transport_arg(value: str) -> str:
+    if value not in {"stdio", "http"}:
+        raise argparse.ArgumentTypeError("Transport must be stdio or http.")
+    return value
+
+
+def _port_arg(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Port must be an integer from 1 to 65535.") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("Port must be an integer from 1 to 65535.")
+    return port
+
+
+def _add_serve_arguments(
+    parser: argparse.ArgumentParser, *, suppress_defaults: bool = False
+) -> None:
+    # Subcommand defaults must not overwrite flags supplied before `serve`.
+    defaults: dict[str, Any] = {
+        "transport": os.environ.get("DEPUTY_MCP_TRANSPORT", "stdio"),
+        "host": os.environ.get("DEPUTY_MCP_HOST", "127.0.0.1"),
+        "port": os.environ.get("DEPUTY_MCP_PORT", "8000"),
+        "allow_remote": os.environ.get("DEPUTY_MCP_ALLOW_REMOTE", "").strip().lower() == "true",
+    }
+    if suppress_defaults:
+        defaults = dict.fromkeys(defaults, argparse.SUPPRESS)
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        type=_transport_arg,
+        default=defaults["transport"],
+        help="MCP transport (DEPUTY_MCP_TRANSPORT; default stdio).",
+    )
+    parser.add_argument(
+        "--host",
+        default=defaults["host"],
+        help="HTTP bind host (DEPUTY_MCP_HOST; default 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=_port_arg,
+        default=defaults["port"],
+        help="HTTP bind port (DEPUTY_MCP_PORT; default 8000).",
+    )
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        default=defaults["allow_remote"],
+        help="Allow unauthenticated remote HTTP access (DEPUTY_MCP_ALLOW_REMOTE=true).",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -328,19 +384,44 @@ def _cmd_logout() -> int:
 # --------------------------------------------------------------------------- #
 # Serve mode
 # --------------------------------------------------------------------------- #
-def _serve() -> int:
-    """Run the MCP server on stdio; never writes to stdout (stderr only)."""
+def _serve(args: argparse.Namespace) -> int:
+    """Run the MCP server; status messages go only to stderr."""
+    if args.transport == "http" and args.host not in {"127.0.0.1", "::1", "localhost"}:
+        if not args.allow_remote:
+            _fail(
+                DeputyConfigError(
+                    "HTTP host is not loopback. Use --allow-remote or "
+                    "DEPUTY_MCP_ALLOW_REMOTE=true to allow access without MCP authentication."
+                )
+            )
+            return 1
+        print(
+            "deputy-mcp warning: no MCP-level authentication; anyone who can reach the port "
+            "acts with the configured Deputy credentials.",
+            file=sys.stderr,
+        )
     # Lazy import: client-only CLI use must never import fastmcp.
     from deputy_mcp.server import create_server
 
-    print("deputy-mcp: starting MCP server on stdio.", file=sys.stderr)
+    print(f"deputy-mcp: starting MCP server on {args.transport}.", file=sys.stderr)
     try:
         server = create_server()
     except DeputyError as exc:
         _fail(exc)
         return 1
     # stdout is the protocol channel; keep stderr to our one status line (no banner).
-    server.run(transport="stdio", show_banner=False)
+    if args.transport == "http":
+        # Strict Host/Origin checks on every request: there is no MCP auth, so this is
+        # what stops a web page from reaching the server through DNS rebinding.
+        server.run(
+            transport="http",
+            host=args.host,
+            port=args.port,
+            show_banner=False,
+            host_origin_protection=True,
+        )
+    else:
+        server.run(transport="stdio", show_banner=False)
     return 0
 
 
@@ -359,7 +440,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     command: str = args.command or "serve"
 
     if command == "serve":
-        return _serve()
+        return _serve(args)
     if command == "login":
         return _cmd_login(open_browser=not args.no_browser)
     if command == "logout":

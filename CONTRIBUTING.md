@@ -10,8 +10,8 @@ test behind it.
 Deputy MCP uses [uv](https://docs.astral.sh/uv/) and supports Python 3.11–3.13.
 
 ```bash
-git clone https://github.com/augbastos/Deputy-MCP.git
-cd Deputy-MCP
+git clone https://github.com/augbastos/deputy-mcp.git
+cd deputy-mcp
 uv sync                          # creates .venv with runtime and dev dependencies
 
 uv run pytest                    # unit, client, server and agent evals; no network

@@ -1,0 +1,117 @@
+{
+  "manifest_version": "0.4",
+  "name": "deputy-mcp",
+  "display_name": "Deputy MCP",
+  "version": "0.3.0",
+  "description": "Deputy workforce data for AI agents: rosters, timesheets and shifts; read-only by default",
+  "author": {
+    "name": "Augusto Bastos"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/augbastos/deputy-mcp"
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "src/deputy_mcp/__main__.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${__dirname}",
+        "--no-dev",
+        "--frozen",
+        "deputy-mcp"
+      ],
+      "env": {
+        "DEPUTY_CALENDAR_URL": "${user_config.calendar_url}",
+        "DEPUTY_OAUTH_CLIENT_ID": "${user_config.oauth_client_id}",
+        "DEPUTY_OAUTH_CLIENT_SECRET": "${user_config.oauth_client_secret}",
+        "DEPUTY_API_TOKEN": "${user_config.api_token}",
+        "DEPUTY_BASE_URL": "${user_config.base_url}",
+        "DEPUTY_ALLOW_WRITES": "${user_config.allow_writes}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "deputy_whoami"
+    },
+    {
+      "name": "deputy_get_my_roster"
+    },
+    {
+      "name": "deputy_next_shift"
+    },
+    {
+      "name": "deputy_get_my_timesheets"
+    },
+    {
+      "name": "deputy_get_my_colleagues"
+    },
+    {
+      "name": "deputy_get_my_calendar_url"
+    },
+    {
+      "name": "deputy_get_areas"
+    },
+    {
+      "name": "deputy_get_team_roster"
+    },
+    {
+      "name": "deputy_who_is_working"
+    },
+    {
+      "name": "deputy_get_employee_info"
+    },
+    {
+      "name": "deputy_search_shifts"
+    }
+  ],
+  "user_config": {
+    "calendar_url": {
+      "type": "string",
+      "title": "Calendar URL",
+      "description": "Personal Deputy calendar feed; use exactly one authentication mode.",
+      "required": false,
+      "sensitive": true
+    },
+    "oauth_client_id": {
+      "type": "string",
+      "title": "OAuth client ID",
+      "description": "Personal Deputy OAuth app ID; run deputy-mcp login first.",
+      "required": false,
+      "sensitive": false
+    },
+    "oauth_client_secret": {
+      "type": "string",
+      "title": "OAuth client secret",
+      "description": "Secret for the same Deputy OAuth app.",
+      "required": false,
+      "sensitive": true
+    },
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "Deputy API token; pair with the base URL.",
+      "required": false,
+      "sensitive": true
+    },
+    "base_url": {
+      "type": "string",
+      "title": "Base URL",
+      "description": "Deputy install origin, e.g. https://your-company.eu.deputy.com.",
+      "required": false,
+      "sensitive": false
+    },
+    "allow_writes": {
+      "type": "boolean",
+      "title": "Allow writes",
+      "description": "Enable action tools that can change Deputy data.",
+      "required": false,
+      "default": false
+    }
+  }
+}

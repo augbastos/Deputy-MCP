@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Verify release versions
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import runpy
+          from pathlib import Path
+
+          version = runpy.run_path("src/deputy_mcp/__init__.py")["__version__"]
+          registry = json.loads(Path("server.json").read_text())
+          manifest = json.loads(Path("manifest.json").read_text())
+          assert os.environ["RELEASE_TAG"] == f"v{version}", "Tag/package mismatch"
+          assert registry["version"] == version, "Registry version mismatch"
+          assert all(p["version"] == version for p in registry["packages"])
+          assert manifest["version"] == version, "Bundle version mismatch"
+          PY
+      - run: uv build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify and install MCP publisher
+        run: |
+          base=https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1
+          curl --fail --silent --show-error --location "$base/mcp-publisher_linux_amd64.tar.gz" -o mcp-publisher_linux_amd64.tar.gz
+          curl --fail --silent --show-error --location "$base/registry_1.8.1_checksums.txt" -o registry_1.8.1_checksums.txt
+          grep -E '^[0-9a-fA-F]{64}  [*]?mcp-publisher_linux_amd64.tar.gz$' registry_1.8.1_checksums.txt > publisher.sha256
+          test "$(wc -l < publisher.sha256)" -eq 1
+          sha256sum --check publisher.sha256
+          tar -xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
+
+  mcpb:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pack desktop bundle
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        # An allowlist, not .mcpbignore: the bundle carries only what uv needs to run it.
+        run: |
+          mkdir bundle
+          cp -r manifest.json pyproject.toml uv.lock README.md LICENSE src bundle/
+          npx --yes @anthropic-ai/mcpb@2.1.2 pack bundle "deputy-mcp-${RELEASE_TAG#v}.mcpb"
+      - name: Attach bundle to the tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          bundle="deputy-mcp-${RELEASE_TAG#v}.mcpb"
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$bundle" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$bundle" --verify-tag --title "Deputy MCP ${RELEASE_TAG#v}"
+          fi
