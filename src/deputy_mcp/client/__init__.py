@@ -124,7 +124,8 @@ class DeputyClient(ReadsMixin, WritesMixin):
             self._http = DeputyHTTP(config)
         elif config.auth_kind == "oauth":
             self._http = DeputyHTTP(
-                config, token_store=resolve_token_store(config.token_store_path)
+                config,
+                token_store=resolve_token_store(config.token_store_path, config.oauth_client_id),
             )
         else:
             self._ical_source = IcalRosterSource(

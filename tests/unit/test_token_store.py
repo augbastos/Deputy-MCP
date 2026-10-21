@@ -29,6 +29,7 @@ from deputy_mcp.token_store import (
     FileTokenStore,
     KeyringTokenStore,
     OAuthTokens,
+    keyring_account,
     legacy_token_path,
     resolve_token_store,
 )
@@ -44,6 +45,10 @@ def _tokens(access: str = "acc-1", refresh: str = "ref-1", expires: float = _FUT
     return OAuthTokens(
         access_token=access, refresh_token=refresh, expires_at=expires, base_url=_ORIGIN
     )
+
+
+#: The keychain entry the clients built by :func:`_oauth_config` use.
+_ACCOUNT = keyring_account("fake-client-id")
 
 
 def _oauth_config(**overrides: object) -> DeputyConfig:
@@ -70,10 +75,10 @@ def test_keychain_is_the_default_and_a_path_selects_the_file_fallback(tmp_path: 
 
 
 def test_keychain_round_trip_writes_no_file(memory_keyring: Any) -> None:
-    store = KeyringTokenStore(legacy_path=legacy_token_path())
+    store = KeyringTokenStore(account=_ACCOUNT, legacy_path=legacy_token_path())
     store.save(_tokens())
     assert store.load() == _tokens()
-    assert list(memory_keyring.entries) == [(KEYRING_SERVICE, "oauth-token")]
+    assert list(memory_keyring.entries) == [(KEYRING_SERVICE, _ACCOUNT)]
     assert not legacy_token_path().parent.exists()
 
 
@@ -85,8 +90,8 @@ def test_no_secret_in_reprs_or_locations(tmp_path: Path) -> None:
     for text in (
         repr(tokens),
         str(tokens),
-        repr(KeyringTokenStore()),
-        KeyringTokenStore().location,
+        repr(KeyringTokenStore(account=_ACCOUNT)),
+        KeyringTokenStore(account=_ACCOUNT).location,
         repr(FileTokenStore(tmp_path / "t.json")),
     ):
         assert "acc-secret-value" not in text
@@ -96,7 +101,7 @@ def test_no_secret_in_reprs_or_locations(tmp_path: Path) -> None:
 def test_missing_keychain_fails_closed_with_the_file_fallback_hint() -> None:
     keyring.set_keyring(fail.Keyring())
     with pytest.raises(DeputyConfigError) as excinfo:
-        KeyringTokenStore().load()
+        KeyringTokenStore(account=_ACCOUNT).load()
     assert "DEPUTY_TOKEN_STORE" in str(excinfo.value)
 
 
@@ -118,7 +123,7 @@ class _LeakyBackend(KeyringBackend):
 def test_backend_errors_never_echo_the_secret() -> None:
     keyring.set_keyring(_LeakyBackend())
     with pytest.raises(DeputyConfigError) as excinfo:
-        KeyringTokenStore().save(_tokens(access="acc-must-not-leak"))
+        KeyringTokenStore(account=_ACCOUNT).save(_tokens(access="acc-must-not-leak"))
     assert "acc-must-not-leak" not in str(excinfo.value)
 
 
@@ -128,7 +133,7 @@ def test_backend_errors_never_echo_the_secret() -> None:
 def test_delete_removes_the_keychain_entry_and_a_leftover_legacy_file(
     memory_keyring: Any,
 ) -> None:
-    store = KeyringTokenStore(legacy_path=legacy_token_path())
+    store = KeyringTokenStore(account=_ACCOUNT, legacy_path=legacy_token_path())
     store.save(_tokens())
     FileTokenStore(legacy_token_path()).save(_tokens(expires=_PAST))
     # Loading would migrate; delete directly to prove both locations are cleared.
@@ -145,7 +150,9 @@ def test_cli_logout_clears_the_keychain(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("DEPUTY_TOKEN_STORE", raising=False)
-    KeyringTokenStore().save(_tokens())
+    monkeypatch.setenv("DEPUTY_OAUTH_CLIENT_ID", "fake-client-id")
+    monkeypatch.setenv("DEPUTY_OAUTH_CLIENT_SECRET", "fake-client-secret")
+    KeyringTokenStore(account=_ACCOUNT).save(_tokens())
     assert cli.main(["logout"]) == 0
     assert memory_keyring.entries == {}
     assert "OS keychain" in capsys.readouterr().out
@@ -158,16 +165,16 @@ def test_legacy_file_moves_into_the_keychain_and_is_deleted(
     memory_keyring: Any,
 ) -> None:
     FileTokenStore(legacy_token_path()).save(_tokens(access="legacy-acc"))
-    loaded = KeyringTokenStore(legacy_path=legacy_token_path()).load()
+    loaded = KeyringTokenStore(account=_ACCOUNT, legacy_path=legacy_token_path()).load()
     assert loaded is not None and loaded.access_token == "legacy-acc"
     assert not legacy_token_path().exists()
-    assert KeyringTokenStore().load() == loaded
+    assert KeyringTokenStore(account=_ACCOUNT).load() == loaded
 
 
 def test_newer_keychain_token_beats_an_older_legacy_file() -> None:
-    KeyringTokenStore().save(_tokens(access="keychain-acc", expires=_FUTURE))
+    KeyringTokenStore(account=_ACCOUNT).save(_tokens(access="keychain-acc", expires=_FUTURE))
     FileTokenStore(legacy_token_path()).save(_tokens(access="legacy-acc", expires=_PAST))
-    loaded = KeyringTokenStore(legacy_path=legacy_token_path()).load()
+    loaded = KeyringTokenStore(account=_ACCOUNT, legacy_path=legacy_token_path()).load()
     assert loaded is not None and loaded.access_token == "keychain-acc"
     assert not legacy_token_path().exists()
 
@@ -175,7 +182,7 @@ def test_newer_keychain_token_beats_an_older_legacy_file() -> None:
 def test_corrupt_legacy_file_is_left_untouched() -> None:
     legacy_token_path().parent.mkdir(parents=True)
     legacy_token_path().write_text("{not json", encoding="utf-8")
-    assert KeyringTokenStore(legacy_path=legacy_token_path()).load() is None
+    assert KeyringTokenStore(account=_ACCOUNT, legacy_path=legacy_token_path()).load() is None
     assert legacy_token_path().exists()
 
 
@@ -187,7 +194,9 @@ def _token_body(access: str, refresh: str) -> dict[str, object]:
 
 
 async def test_refresh_rotation_is_persisted_to_the_keychain() -> None:
-    KeyringTokenStore().save(_tokens(access="old-acc", refresh="old-ref", expires=_PAST))
+    KeyringTokenStore(account=_ACCOUNT).save(
+        _tokens(access="old-acc", refresh="old-ref", expires=_PAST)
+    )
     with respx.mock(assert_all_called=False) as router:
         router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
         token = router.post(oauth.refresh_url(_ORIGIN)).mock(
@@ -196,7 +205,7 @@ async def test_refresh_rotation_is_persisted_to_the_keychain() -> None:
         async with DeputyClient(_oauth_config()) as client:
             await client.get_my_roster(*_WINDOW)
     assert token.call_count == 1
-    stored = KeyringTokenStore().load()
+    stored = KeyringTokenStore(account=_ACCOUNT).load()
     assert stored is not None
     assert (stored.access_token, stored.refresh_token) == ("new-acc", "new-ref")
 
@@ -205,9 +214,13 @@ async def test_token_saved_by_another_process_is_adopted_instead_of_refreshing()
     # This process holds an expired token; another process (a CLI call, or a fresh
     # `deputy-mcp login`) already stored a newer one. Spending our stale refresh token
     # would race Deputy's rotation, so the stored token must be adopted.
-    KeyringTokenStore().save(_tokens(access="stale-acc", refresh="stale-ref", expires=_PAST))
+    KeyringTokenStore(account=_ACCOUNT).save(
+        _tokens(access="stale-acc", refresh="stale-ref", expires=_PAST)
+    )
     client = DeputyClient(_oauth_config())
-    KeyringTokenStore().save(_tokens(access="other-process-acc", refresh="other-ref"))
+    KeyringTokenStore(account=_ACCOUNT).save(
+        _tokens(access="other-process-acc", refresh="other-ref")
+    )
     with respx.mock(assert_all_called=False) as router:
         roster = router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
         token = router.post(oauth.refresh_url(_ORIGIN)).mock(
@@ -222,7 +235,9 @@ async def test_token_saved_by_another_process_is_adopted_instead_of_refreshing()
 
 
 async def test_concurrent_requests_share_a_single_refresh() -> None:
-    KeyringTokenStore().save(_tokens(access="old-acc", refresh="old-ref", expires=_PAST))
+    KeyringTokenStore(account=_ACCOUNT).save(
+        _tokens(access="old-acc", refresh="old-ref", expires=_PAST)
+    )
     with respx.mock(assert_all_called=False) as router:
         router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
         token = router.post(oauth.refresh_url(_ORIGIN)).mock(
@@ -237,7 +252,7 @@ async def test_login_while_the_server_runs_takes_effect_without_restart() -> Non
     async with DeputyClient(_oauth_config()) as client:
         with pytest.raises(DeputyError, match="deputy-mcp login"):
             await client.get_my_roster(*_WINDOW)
-        KeyringTokenStore().save(_tokens(access="fresh-login-acc"))
+        KeyringTokenStore(account=_ACCOUNT).save(_tokens(access="fresh-login-acc"))
         with respx.mock(assert_all_called=False) as router:
             roster = router.get(_ROSTER_URL).mock(return_value=httpx.Response(200, json=[]))
             await client.get_my_roster(*_WINDOW)
@@ -248,7 +263,7 @@ async def test_login_while_the_server_runs_takes_effect_without_restart() -> Non
 # A tampered store cannot redirect the bearer token
 # --------------------------------------------------------------------------- #
 async def test_tampered_store_host_is_refused_before_any_request() -> None:
-    KeyringTokenStore().save(
+    KeyringTokenStore(account=_ACCOUNT).save(
         OAuthTokens("acc-must-stay-home", "ref", _FUTURE, base_url="https://evil.example.org")
     )
     with respx.mock(assert_all_called=False) as router:
@@ -302,7 +317,7 @@ async def test_keychain_is_read_off_the_event_loop_and_not_at_construction(
         return original(service, username)
 
     memory_keyring.get_password = spying_get
-    KeyringTokenStore().save(_tokens())
+    KeyringTokenStore(account=_ACCOUNT).save(_tokens())
     reads.clear()
     client = DeputyClient(_oauth_config())
     assert reads == []  # nothing read while the server is being built
@@ -338,4 +353,21 @@ class _LockedDeleteBackend(KeyringBackend):
 def test_failed_keychain_delete_is_an_error_not_nothing_to_remove() -> None:
     keyring.set_keyring(_LockedDeleteBackend())
     with pytest.raises(DeputyConfigError, match="remove the OAuth token"):
-        KeyringTokenStore().delete()
+        KeyringTokenStore(account=_ACCOUNT).delete()
+
+
+def test_each_oauth_client_has_its_own_keychain_entry(memory_keyring: Any) -> None:
+    work = resolve_token_store(None, "work-client-id")
+    trial = resolve_token_store(None, "trial-client-id")
+    work.save(_tokens(access="work-acc"))
+    assert trial.load() is None
+    trial.save(_tokens(access="trial-acc"))
+    loaded = work.load()
+    assert loaded is not None and loaded.access_token == "work-acc"
+
+
+def test_keychain_account_does_not_reveal_the_client_id() -> None:
+    account = keyring_account("my-secret-client-id")
+    assert "my-secret-client-id" not in account
+    assert account == keyring_account("my-secret-client-id")
+    assert keyring_account(None) == "oauth-token"
