@@ -236,8 +236,8 @@ class DeputyHTTP:
             stored = await asyncio.to_thread(store.load)
             if stored is None:
                 raise DeputyAuthError(
-                    "Not signed in to Deputy: no OAuth token is stored. Run "
-                    "'deputy-mcp login' first.",
+                    "Not signed in to Deputy: no OAuth token is stored. Call the "
+                    "deputy_login tool, or run 'deputy-mcp login' in a terminal.",
                     hint=(
                         "Register an app at https://once.deputy.com/my/oauth_clients "
                         "(redirect http://localhost:8823/callback), set "
@@ -306,7 +306,7 @@ class DeputyHTTP:
                 # A non-auth failure (network/shape): still actionable via re-login.
                 raise DeputyAuthError(
                     f"Could not refresh the Deputy OAuth token: {exc.message}",
-                    hint="Run 'deputy-mcp login' again.",
+                    hint="Call the deputy_login tool, or run 'deputy-mcp login' again.",
                 ) from exc
             # The old refresh token is already spent: adopt the new pair in memory first so
             # this process keeps working even if persisting it then fails (that failure

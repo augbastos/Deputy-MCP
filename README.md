@@ -50,7 +50,9 @@ claude mcp add deputy \
 ```
 
 Login opens your browser and stores OAuth tokens in your OS keychain by default.
-Run login and Claude Code as the same OS user.
+Run login and Claude Code as the same OS user. No terminal (for example, the Claude
+Desktop bundle)? Set the two OAuth values and ask the assistant to sign you in: the
+`deputy_login` tool opens the same browser sign-in.
 
 ### Admin API token
 
