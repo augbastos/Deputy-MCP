@@ -4,6 +4,17 @@ All notable changes to Deputy MCP. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [semantic versioning](https://semver.org/) (pre-1.0: a minor version may break).
 
+## [0.3.1] — 2026-10-21
+
+### Added
+
+- `deputy_login` tool (OAuth mode only): signs in from inside an MCP client by opening
+  the browser, so the desktop bundle no longer needs a terminal for `deputy-mcp login`.
+
+### Changed
+
+- "Not signed in" and failed-refresh errors point to `deputy_login` as well as the CLI.
+
 ## [0.3.0] — 2026-10-21
 
 ### Added

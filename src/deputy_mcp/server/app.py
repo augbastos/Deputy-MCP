@@ -111,6 +111,12 @@ def create_server() -> FastMCP[dict[str, Any]]:
     resources.register(mcp, provider)
     prompts.register(mcp)
 
+    config = client.config
+    if config.oauth_client_id and config.oauth_client_secret is not None:
+        from deputy_mcp.server import tools_auth
+
+        tools_auth.register(mcp, config)
+
     if allow_writes:
         from deputy_mcp.server import tools_write
 
